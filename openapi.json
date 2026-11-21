@@ -5071,6 +5071,7 @@
         "enum": [
           "text",
           "port",
+          "flag",
           "secret"
         ]
       },

@@ -2018,7 +2018,7 @@ export interface components {
             field: string;
         };
         /** @enum {string} */
-        FieldKindOut: "text" | "port" | "secret";
+        FieldKindOut: "text" | "port" | "flag" | "secret";
         /** @description A field's value in a record read; `null` where empty. */
         FieldValue: {
             field: string;

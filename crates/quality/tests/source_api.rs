@@ -251,6 +251,27 @@ async fn a_steward_creates_and_edits_a_source_audited_and_never_sees_its_secrets
         .unwrap()
         .iter()
         .any(|d| d["id"] == "sqlserver" && d["engine"] == "trino"));
+    let field = |driver: &str, key: &str| {
+        drivers
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["id"] == driver)
+            .unwrap()["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["key"] == key)
+            .cloned()
+    };
+    assert_eq!(
+        field("sqlserver", "trust_server_certificate"),
+        Some(json!({ "key": "trust_server_certificate", "kind": "flag", "required": false }))
+    );
+    assert_eq!(
+        field("oracle", "owner"),
+        Some(json!({ "key": "owner", "kind": "text", "required": false }))
+    );
 }
 
 #[tokio::test]

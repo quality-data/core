@@ -45,8 +45,24 @@ export function missing(driver: Driver, values: Record<string, string>, set: str
 
 /** A field's label in the person's language. */
 export function fieldLabel(key: string): string {
-  const known = ["host", "port", "database", "service", "user", "password", "options"];
+  const known = [
+    "host",
+    "port",
+    "database",
+    "service",
+    "user",
+    "password",
+    "options",
+    "owner",
+    "trust_server_certificate",
+  ];
   return known.includes(key) ? t(`quality:sources.field.${key}`) : key;
+}
+
+/** A field's hint in the person's language, if it has one. */
+export function fieldHint(key: string): string | undefined {
+  const known = ["owner", "trust_server_certificate"];
+  return known.includes(key) ? t(`quality:sources.fieldHint.${key}`) : undefined;
 }
 
 /** A refusal of the API as a text. */

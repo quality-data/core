@@ -19,6 +19,8 @@ pub enum Engine {
 pub enum FieldKind {
     Text,
     Port,
+    /// `true` or `false`; left out, `false`.
+    Flag,
     /// Kept only sealed, in two versions; never sent back to a browser.
     Secret,
 }
@@ -58,6 +60,18 @@ const OPTIONS: Field = field("options", FieldKind::Text, false);
 /// Server, port, database, user, password and the driver's options.
 const SERVER: &[Field] = &[HOST, PORT, DATABASE, USER, PASSWORD, OPTIONS];
 
+/// SQL Server's: [`SERVER`] and whether its certificate is accepted
+/// without being verified (off unless set: a self-signed server).
+const SQLSERVER: &[Field] = &[
+    HOST,
+    PORT,
+    DATABASE,
+    USER,
+    PASSWORD,
+    OPTIONS,
+    field("trust_server_certificate", FieldKind::Flag, false),
+];
+
 /// The drivers there are. A new engine is a new entry and its adapter.
 pub const DRIVERS: &[Driver] = &[
     Driver {
@@ -80,7 +94,7 @@ pub const DRIVERS: &[Driver] = &[
             connector: "sqlserver",
         },
         default_port: Some(1433),
-        fields: SERVER,
+        fields: SQLSERVER,
     },
     Driver {
         id: "oracle",
@@ -95,6 +109,9 @@ pub const DRIVERS: &[Driver] = &[
             USER,
             PASSWORD,
             OPTIONS,
+            // The Oracle schema whose tables it reads; left out, the
+            // connected user (decision 0077 point 8).
+            field("owner", FieldKind::Text, false),
         ],
     },
     Driver {
@@ -175,6 +192,8 @@ impl Source {
                     errors.push(SourceError::Value(key.clone()));
                 } else if f.kind == FieldKind::Port && !value.parse::<u16>().is_ok_and(|p| p > 0) {
                     errors.push(SourceError::Port(key.clone()));
+                } else if f.kind == FieldKind::Flag && !matches!(value.as_str(), "true" | "false") {
+                    errors.push(SourceError::Value(key.clone()));
                 }
             }
         }
@@ -195,6 +214,11 @@ impl Source {
         }
     }
 
+    /// Whether the flag `key` is set; left out, it is not.
+    pub fn flag(&self, key: &str) -> bool {
+        flag(&self.fields, key)
+    }
+
     /// The port it connects to: its own, or the driver's.
     pub fn port(&self) -> Option<u16> {
         self.fields
@@ -202,6 +226,12 @@ impl Source {
             .and_then(|p| p.parse().ok())
             .or_else(|| driver(&self.driver).and_then(|d| d.default_port))
     }
+}
+
+/// Whether the flag `key` is set in a source's `fields`; left out, it is
+/// not.
+pub fn flag(fields: &BTreeMap<String, String>, key: &str) -> bool {
+    fields.get(key).is_some_and(|v| v == "true")
 }
 
 #[cfg(test)]
@@ -261,6 +291,39 @@ mod tests {
             [
                 SourceError::UnknownField("database".into()),
                 SourceError::Missing("service".into())
+            ]
+        );
+    }
+
+    #[test]
+    fn an_oracle_owner_and_a_trusted_certificate_are_optional() {
+        let mut oracle = postgres();
+        oracle.driver = "oracle".into();
+        oracle.fields = map(&[("host", "db.example"), ("service", "FREEPDB1")]);
+        assert_eq!(oracle.validate().unwrap().id, "oracle");
+        oracle.fields.insert("owner".into(), "QS_APP".into());
+        assert_eq!(oracle.validate().unwrap().id, "oracle");
+        let mut sql = postgres();
+        sql.driver = "sqlserver".into();
+        assert!(!sql.flag("trust_server_certificate"), "off unless set");
+        for (value, valid) in [("true", true), ("false", true), ("yes", false)] {
+            sql.fields
+                .insert("trust_server_certificate".into(), value.into());
+            assert_eq!(sql.validate().is_ok(), valid, "{value}");
+        }
+        sql.fields
+            .insert("trust_server_certificate".into(), "true".into());
+        assert!(sql.flag("trust_server_certificate"));
+        // Each driver's own: Postgres has neither.
+        let mut pg = postgres();
+        pg.fields.insert("owner".into(), "HR".into());
+        pg.fields
+            .insert("trust_server_certificate".into(), "true".into());
+        assert_eq!(
+            pg.validate().unwrap_err(),
+            [
+                SourceError::UnknownField("owner".into()),
+                SourceError::UnknownField("trust_server_certificate".into())
             ]
         );
     }

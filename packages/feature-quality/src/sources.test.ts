@@ -40,6 +40,27 @@ describe("sourceBody", () => {
   });
 });
 
+describe("an optional flag", () => {
+  const sqlserver: Driver = {
+    ...postgres,
+    id: "sqlserver",
+    fields: [
+      ...postgres.fields,
+      { key: "trust_server_certificate", kind: "flag", required: false },
+    ],
+  };
+  it("is sent only when set, so off is left out", () => {
+    const base = { host: "db", database: "core", user: "reader", password: "synthetic" };
+    expect(sourceBody(sqlserver, base).fields).toEqual({ host: "db", database: "core" });
+    expect(sourceBody(sqlserver, { ...base, trust_server_certificate: "true" }).fields).toEqual({
+      host: "db",
+      database: "core",
+      trust_server_certificate: "true",
+    });
+    expect(missing(sqlserver, base, [])).toEqual([]);
+  });
+});
+
 describe("missing", () => {
   it("names the required fields still empty, but not a secret already set", () => {
     expect(missing(postgres, { host: "db" }, ["user", "password"])).toEqual(["database"]);

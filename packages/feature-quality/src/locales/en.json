@@ -43,7 +43,13 @@
       "service": "Service",
       "user": "User",
       "password": "Password",
-      "options": "Options"
+      "options": "Options",
+      "owner": "Owner (schema)",
+      "trust_server_certificate": "Trust the server certificate"
+    },
+    "fieldHint": {
+      "owner": "Empty: the connected user.",
+      "trust_server_certificate": "Accept the server certificate without verifying it (a self-signed server)."
     },
     "engine": {
       "duckdb": "Read directly (DuckDB)",

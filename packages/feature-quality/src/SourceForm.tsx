@@ -2,7 +2,7 @@ import { createSignal, For, Show, type Component } from "solid-js";
 import { Modal } from "@knime-orchestador/feature-kit/ui";
 import { QualityError, sourcesApi, type Driver, type Refusal, type SourceView } from "./api";
 import { t } from "./i18n";
-import { fieldLabel, missing, refusalText, sourceBody, validName } from "./sources";
+import { fieldHint, fieldLabel, missing, refusalText, sourceBody, validName } from "./sources";
 
 /**
  * A source's form (decision 0036): its fields come from the driver catalog,
@@ -133,22 +133,53 @@ const DriverFields: Component<{
 }> = (props) => (
   <For each={props.driver.fields}>
     {(f) => (
-      <label class="qd-field">
-        <span>{fieldLabel(f.key) + (f.required ? " *" : "")}</span>
-        <input
-          type={f.kind === "secret" && f.key !== "user" ? "password" : "text"}
-          inputMode={f.kind === "port" ? "numeric" : undefined}
-          autocomplete="off"
-          placeholder={
-            f.kind === "port" && props.driver.default_port ? String(props.driver.default_port) : ""
-          }
-          value={f.kind === "secret" ? "" : (props.values[f.key] ?? "")}
-          onInput={(e) => props.onInput(f.key, e.currentTarget.value)}
-        />
-        <Show when={f.kind === "secret" && props.stored.includes(f.key)}>
-          <small>{t("quality:sources.secretKept")}</small>
-        </Show>
-      </label>
+      <Show
+        when={f.kind !== "flag"}
+        fallback={
+          <FlagField
+            field={f.key}
+            on={props.values[f.key] === "true"}
+            onInput={(on) => props.onInput(f.key, on ? "true" : "")}
+          />
+        }
+      >
+        <label class="qd-field">
+          <span>{fieldLabel(f.key) + (f.required ? " *" : "")}</span>
+          <input
+            type={f.kind === "secret" && f.key !== "user" ? "password" : "text"}
+            inputMode={f.kind === "port" ? "numeric" : undefined}
+            autocomplete="off"
+            placeholder={
+              f.kind === "port" && props.driver.default_port
+                ? String(props.driver.default_port)
+                : ""
+            }
+            value={f.kind === "secret" ? "" : (props.values[f.key] ?? "")}
+            onInput={(e) => props.onInput(f.key, e.currentTarget.value)}
+          />
+          <Show when={f.kind === "secret" && props.stored.includes(f.key)}>
+            <small>{t("quality:sources.secretKept")}</small>
+          </Show>
+          <Show when={fieldHint(f.key)}>{(hint) => <small>{hint()}</small>}</Show>
+        </label>
+      </Show>
     )}
   </For>
+);
+
+/** A flag of the driver's, off unless set; off, it is left out of the body. */
+const FlagField: Component<{ field: string; on: boolean; onInput: (on: boolean) => void }> = (
+  props,
+) => (
+  <label class="qd-field">
+    <span>
+      <input
+        type="checkbox"
+        checked={props.on}
+        onChange={(e) => props.onInput(e.currentTarget.checked)}
+      />{" "}
+      {fieldLabel(props.field)}
+    </span>
+    <Show when={fieldHint(props.field)}>{(hint) => <small>{hint()}</small>}</Show>
+  </label>
 );

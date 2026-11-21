@@ -139,6 +139,7 @@ pub struct DriverFieldOut {
 pub enum FieldKindOut {
     Text,
     Port,
+    Flag,
     Secret,
 }
 
@@ -155,6 +156,7 @@ fn driver_out(d: &Driver) -> DriverOut {
             kind: match f.kind {
                 FieldKind::Text => FieldKindOut::Text,
                 FieldKind::Port => FieldKindOut::Port,
+                FieldKind::Flag => FieldKindOut::Flag,
                 FieldKind::Secret => FieldKindOut::Secret,
             },
             required: f.required,

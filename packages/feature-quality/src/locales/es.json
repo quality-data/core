@@ -43,7 +43,13 @@
       "service": "Servicio",
       "user": "Usuario",
       "password": "Contraseña",
-      "options": "Opciones"
+      "options": "Opciones",
+      "owner": "Propietario (esquema)",
+      "trust_server_certificate": "Confiar en el certificado del servidor"
+    },
+    "fieldHint": {
+      "owner": "Vacío: el usuario conectado.",
+      "trust_server_certificate": "Aceptar el certificado del servidor sin verificarlo (un servidor autofirmado)."
     },
     "engine": {
       "duckdb": "Lectura directa (DuckDB)",
