@@ -21,3 +21,9 @@ quality-rules-model.workspace = true
 quality-rules-sql.workspace = true
 quality-rules-tree.workspace = true
 
+
+[dev-dependencies]
+# The contract tier A's own Trino client (tests/trino), when QD_TRINO_URL is set.
+reqwest.workspace = true
+serde_json.workspace = true
+tokio.workspace = true

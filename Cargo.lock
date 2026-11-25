@@ -3089,6 +3089,9 @@ dependencies = [
  "quality-rules-model",
  "quality-rules-sql",
  "quality-rules-tree",
+ "reqwest",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
