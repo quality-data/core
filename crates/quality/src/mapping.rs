@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use quality_rules::check::{FieldType, Schema};
 use quality_rules::{At, ParseError, Position};
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -150,7 +150,7 @@ impl FieldRole {
 }
 
 /// The field's type in silver: what its values are compared as.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Kind {
     /// Codes are text, so their leading zeros survive (decision 0033).

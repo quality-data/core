@@ -7,13 +7,17 @@
 
 use std::collections::BTreeMap;
 
-use quality::layers::{self, DERIVED_BY, ENTITY_KEY, KEY_NORMALIZED};
+use quality::layers::{
+    self, SilverDerivation, SourceClass, DERIVED_BY, ENTITY_KEY, KEY_NORMALIZED,
+};
 use quality::mapping::{FieldRole, Kind, Mapping};
+use quality_rules_compile::FieldType;
 use quality_rules_sql::quote_text;
 
 use crate::keys::entity_key;
 use crate::lake::SilverAt;
-use crate::{invalid, quoted, Error, Runner};
+use crate::silver_legacy::legacy_digest;
+use crate::{field_type, invalid, quoted, Error, Runner};
 
 /// A field's silver type, as DuckDB names it.
 fn duck_type(kind: Kind) -> &'static str {
@@ -89,10 +93,20 @@ impl Runner {
         ))
     }
 
-    /// The digest of a derivation: what silver's `_mapping` holds.
-    pub(crate) fn digest(&self, select: &str) -> Result<String, Error> {
-        self.con
-            .query_row("SELECT sha256(?)", [select], |r| r.get(0))
+    /// The mapping's derivation over its `source` view, whose digest is
+    /// what silver's `_mapping` holds (decision 0090, point 8.5).
+    pub(crate) fn derivation(
+        &self,
+        mapping: &Mapping,
+        source: &str,
+    ) -> Result<SilverDerivation, Error> {
+        let types = self.column_types(source)?;
+        Ok(SilverDerivation::of(mapping, |column| {
+            match types.get(column).map(|t| field_type(t.as_str())) {
+                Some(FieldType::Number) => SourceClass::Number,
+                _ => SourceClass::Other,
+            }
+        }))
     }
 
     /// Creates the silver table with the mapping's columns and `cut`,
@@ -164,7 +178,7 @@ impl Runner {
             ))?;
         }
         let select = self.silver_select(mapping, &source)?;
-        let digest = quote_text(&self.digest(&select)?).map_err(invalid)?;
+        let digest = quote_text(&self.derivation(mapping, &source)?.digest()).map_err(invalid)?;
         let mut names = Vec::new();
         for (name, _) in columns(mapping) {
             names.push(quoted(&name)?);
@@ -213,12 +227,13 @@ impl Runner {
                 Err(e) => return Err(e),
             },
         };
-        let digest = self.digest(&self.silver_select(mapping, source)?)?;
+        let derivation = self.derivation(mapping, source)?;
+        let digests = [derivation.digest(), legacy_digest(&derivation, source)?];
         let from = format!(
             "{table} AT (VERSION => {snapshot}) WHERE cut = CAST({} AS DATE)",
             quote_text(cut).map_err(invalid)?
         );
-        if !self.holds(&from, &digest)? {
+        if !self.holds(&from, &digests)? {
             return Ok(None);
         }
         let mut fields = Vec::new();
@@ -229,15 +244,17 @@ impl Runner {
         Ok(Some((select, table, snapshot)))
     }
 
-    /// Whether the rows `from` gives are some, every one derived by
-    /// `digest`.
-    fn holds(&self, from: &str, digest: &str) -> Result<bool, Error> {
+    /// Whether the rows `from` gives are some, every one derived by one of
+    /// `digests`: the derivation's, or the frozen legacy one.
+    fn holds(&self, from: &str, digests: &[String]) -> Result<bool, Error> {
         let (rows, other): (i64, i64) = self.con.query_row(
             &format!(
-                "SELECT count(*), count(*) FILTER (WHERE {} IS DISTINCT FROM ?) FROM {from}",
-                quoted(DERIVED_BY)?
+                "SELECT count(*), count(*) FILTER (WHERE {} IS NULL OR {} NOT IN ({})) FROM {from}",
+                quoted(DERIVED_BY)?,
+                quoted(DERIVED_BY)?,
+                vec!["?"; digests.len()].join(", ")
             ),
-            [digest],
+            duckdb::params_from_iter(digests.iter()),
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
         Ok(rows > 0 && other == 0)
@@ -309,17 +326,61 @@ fields:
         );
     }
 
+    /// The derivation's SQL at `DERIVATION_VERSION` 1. A change of the SQL
+    /// for the same derivation raises the version, and this text with it.
+    const SILVER_V1: &str = "SELECT *, NULLIF(trim(LEADING '0' FROM regexp_replace(CAST(\"Documento\" AS VARCHAR), '[^0-9]', '', 'g')), '') AS \"_entity_key\", \
+        CASE WHEN (NULLIF(trim(LEADING '0' FROM regexp_replace(CAST(\"Documento\" AS VARCHAR), '[^0-9]', '', 'g')), '')) IS NOT NULL THEN TRUE \
+        WHEN NULLIF(trim(CAST(\"Documento\" AS VARCHAR)), '') IS NOT NULL THEN FALSE END AS \"_entity_key_normalized\" \
+        FROM (SELECT TRY_CAST(\"opened\" AS DATE) AS \"Apertura\", CAST(\"doc\" AS VARCHAR) AS \"Documento\", \
+        TRY_CAST(\"balance\" AS DOUBLE) AS \"Saldo\" FROM \"clients__source\")";
+
+    /// What the string builder before decision 0090 step 7 wrote and
+    /// hashed into `_mapping`, for the same mapping and source.
+    const LEGACY: &str = "SELECT *, NULLIF(ltrim(regexp_replace(CAST(\"Documento\" AS VARCHAR), '[^0-9]', '', 'g'), '0'), '') AS \"_entity_key\", \
+        CASE WHEN (NULLIF(ltrim(regexp_replace(CAST(\"Documento\" AS VARCHAR), '[^0-9]', '', 'g'), '0'), '')) IS NOT NULL THEN TRUE \
+        WHEN NULLIF(trim(CAST(\"Documento\" AS VARCHAR)), '') IS NOT NULL THEN FALSE END AS \"_entity_key_normalized\" \
+        FROM (SELECT TRY_CAST(\"opened\" AS DATE) AS \"Apertura\", CAST(\"doc\" AS VARCHAR) AS \"Documento\", \
+        TRY_CAST(\"balance\" AS DOUBLE) AS \"Saldo\" FROM \"clients__source\")";
+
+    #[test]
+    fn the_silver_sql_changes_only_with_the_derivations_version() {
+        let runner = runner();
+        let mapping = Mapping::parse(MAPPING).unwrap();
+        let select = runner.silver_select(&mapping, "clients__source").unwrap();
+        assert_eq!(layers::DERIVATION_VERSION, 1);
+        assert_eq!(select, SILVER_V1, "raise DERIVATION_VERSION with the SQL");
+    }
+
     #[test]
     fn the_digest_follows_the_derivation() {
         let runner = runner();
         let mapping = Mapping::parse(MAPPING).unwrap();
-        let select = runner.silver_select(&mapping, "clients__source").unwrap();
-        let digest = runner.digest(&select).unwrap();
+        let d = runner.derivation(&mapping, "clients__source").unwrap();
+        let digest = d.digest();
         assert_eq!(digest.len(), 64);
-        assert_eq!(runner.digest(&select).unwrap(), digest);
+        assert_eq!(
+            runner
+                .derivation(&mapping, "clients__source")
+                .unwrap()
+                .digest(),
+            digest
+        );
         let changed = Mapping::parse(&MAPPING.replace("type: date", "type: text")).unwrap();
-        let other = runner.silver_select(&changed, "clients__source").unwrap();
-        assert_ne!(runner.digest(&other).unwrap(), digest);
+        let other = runner.derivation(&changed, "clients__source").unwrap();
+        assert_ne!(other.digest(), digest);
+    }
+
+    #[test]
+    fn the_legacy_digest_is_what_duckdb_hashed_before() {
+        let runner = runner();
+        let mapping = Mapping::parse(MAPPING).unwrap();
+        let d = runner.derivation(&mapping, "clients__source").unwrap();
+        let before: String = runner
+            .con
+            .query_row("SELECT sha256(?)", [LEGACY], |r| r.get(0))
+            .unwrap();
+        assert_eq!(legacy_digest(&d, "clients__source").unwrap(), before);
+        assert_ne!(d.digest(), before);
     }
 
     #[test]
@@ -354,16 +415,27 @@ fields:
             )
             .unwrap();
         let at = |cut: &str| format!("written WHERE cut = DATE '{cut}'");
-        assert!(runner.holds(&at("2026-03-31"), "d1").unwrap());
+        let d = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        assert!(runner.holds(&at("2026-03-31"), &d(&["d1"])).unwrap());
         assert!(
-            !runner.holds(&at("2026-03-31"), "d2").unwrap(),
+            runner.holds(&at("2026-03-31"), &d(&["d2", "d1"])).unwrap(),
+            "the legacy digest"
+        );
+        assert!(
+            !runner.holds(&at("2026-03-31"), &d(&["d2"])).unwrap(),
             "another mapping"
         );
         assert!(
-            !runner.holds(&at("2026-04-30"), "d1").unwrap(),
+            !runner.holds(&at("2026-04-30"), &d(&["d1"])).unwrap(),
             "two mappings"
         );
-        assert!(!runner.holds(&at("2026-05-31"), "d1").unwrap(), "no digest");
-        assert!(!runner.holds(&at("2026-06-30"), "d1").unwrap(), "no rows");
+        assert!(
+            !runner.holds(&at("2026-05-31"), &d(&["d1", "d2"])).unwrap(),
+            "no digest"
+        );
+        assert!(
+            !runner.holds(&at("2026-06-30"), &d(&["d1"])).unwrap(),
+            "no rows"
+        );
     }
 }

@@ -45,6 +45,7 @@ mod records;
 mod sample;
 mod sfc;
 mod silver;
+mod silver_legacy;
 mod source;
 mod tables;
 

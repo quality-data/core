@@ -39,6 +39,8 @@ texts.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde-saphyr.workspace = true
+# Silver's digest, of its derivation (src/layers.rs, decision 0090).
+sha2.workspace = true
 # The queue's gauges in the API's metrics file (decision 0071).
 prometheus-client.workspace = true
 
