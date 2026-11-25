@@ -17,7 +17,7 @@ workspace = true
 [dependencies]
 quality.workspace = true
 quality-rules-compile.workspace = true
-quality-rules-sql.workspace = true
-
-[dev-dependencies]
 quality-rules-model.workspace = true
+quality-rules-sql.workspace = true
+quality-rules-tree.workspace = true
+
