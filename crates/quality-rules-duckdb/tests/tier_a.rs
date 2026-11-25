@@ -8,6 +8,7 @@ mod trino;
 use duckdb::Connection;
 use quality_rules_duckdb::Runner;
 use quality_rules_lint::lint;
+use quality_rules_trino::ShapeKind;
 use serde_json::Value;
 use trino::{bound, rows, url};
 
@@ -43,19 +44,45 @@ fn values() -> String {
     )
 }
 
+/// Synthetic numbers of each kind: integers, decimals (one without
+/// integer digits, T21's `DECIMAL(p, p)`), and a double, NULLs among them.
+fn numbers() -> String {
+    let rows: Vec<String> = [
+        ("7", "1234.5", "0.25", "1.5"),
+        ("-42", "0.07", "0.5", "1e300"),
+        ("NULL", "99", "NULL", "-0.1"),
+        ("100000", "-3.10", "0.0001", "NULL"),
+    ]
+    .iter()
+    .map(|(i, d, p, f)| {
+        format!(
+            "(CAST({i} AS BIGINT), CAST({d} AS DECIMAL(9, 2)), CAST({p} AS DECIMAL(4, 4)), \
+             CAST({f} AS DOUBLE))"
+        )
+    })
+    .collect();
+    format!(
+        "(VALUES {}) t(\"Count\", \"Price\", \"Share\", \"Amount\")",
+        rows.join(", ")
+    )
+}
+
 fn runner() -> (Runner, std::path::PathBuf) {
-    let dir = std::env::temp_dir().join(format!("qd-tier-a-{}", std::process::id()));
+    loaded("loans", &values())
+}
+
+fn loaded(name: &str, relation: &str) -> (Runner, std::path::PathBuf) {
+    let dir = std::env::temp_dir().join(format!("qd-tier-a-{name}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("loans.parquet").display().to_string();
+    let path = dir.join(format!("{name}.parquet")).display().to_string();
     Connection::open_in_memory()
         .unwrap()
         .execute_batch(&format!(
-            "COPY (SELECT * FROM {}) TO '{path}' (FORMAT parquet)",
-            values()
+            "COPY (SELECT * FROM {relation}) TO '{path}' (FORMAT parquet)"
         ))
         .unwrap();
     let mut r = Runner::new().unwrap();
-    r.load("loans", &path).unwrap();
+    r.load(name, &path).unwrap();
     (r, dir)
 }
 
@@ -93,12 +120,30 @@ async fn case_4_rule_counts_agree() {
 async fn case_5_field_profiles_agree() {
     let Some(base) = url() else { return };
     let (r, dir) = runner();
-    // Text and dates only: a number's shape is its text, and the engines
-    // write a double as text differently (T1), a finding left for the user.
-    let duck = r.field_quality("loans", &["Code", "Opened"]).unwrap();
-    for f in duck {
-        let s = quality_rules_trino::field_profile(&values(), &f.field).unwrap();
-        let t = rows(&base, &s.sql).await;
+    profiles_agree(&base, &r, "loans", &values(), &["Code", "Opened", "Amount"]).await;
+    std::fs::remove_dir_all(dir).unwrap();
+    // Numbers by kind (rulings 26 and 27): integers and decimals by their
+    // text, a double with no shape.
+    let (r, dir) = loaded("numbers", &numbers());
+    let all = ["Count", "Price", "Share", "Amount"];
+    profiles_agree(&base, &r, "numbers", &numbers(), &all).await;
+    let duck = r.field_quality("numbers", &all).unwrap();
+    assert_eq!(duck[2].pattern.as_deref(), Some("9.9999"));
+    assert_eq!(
+        (duck[3].pattern.as_deref(), duck[3].pattern_count),
+        (None, 0)
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// Trino's profile of each of `fields` over `relation`, of the kind its
+/// type in the loaded `dataset` says, equals DuckDB's.
+async fn profiles_agree(base: &str, r: &Runner, dataset: &str, relation: &str, fields: &[&str]) {
+    let types = r.column_types(dataset).unwrap();
+    for f in r.field_quality(dataset, fields).unwrap() {
+        let kind = ShapeKind::of_type(&types[&f.field]);
+        let s = quality_rules_trino::field_profile(relation, &f.field, kind).unwrap();
+        let t = rows(base, &s.sql).await;
         let got = (
             int(&t[0][0]),
             int(&t[0][1]),
@@ -112,7 +157,6 @@ async fn case_5_field_profiles_agree() {
             f.field
         );
     }
-    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[tokio::test]
