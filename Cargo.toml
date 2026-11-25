@@ -68,6 +68,9 @@ quality = { path = "crates/quality" }
 # Not a stage: the adapter that runs the language on an embedded DuckDB
 # (Parquet in, counts out). It does I/O; the stages above stay pure.
 quality-rules-duckdb = { path = "crates/quality-rules-duckdb" }
+# The statements for Trino (decision 0090): SQL text only, pure; the job
+# runners submit them.
+quality-rules-trino = { path = "crates/quality-rules-trino" }
 # Test-only harness (ephemeral Postgres via testcontainers); consumed only
 # from other crates' `[dev-dependencies]`, never a runtime dependency.
 testkit = { path = "crates/testkit" }
