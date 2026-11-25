@@ -21,3 +21,7 @@ quality-rules-tree.workspace = true
 [dev-dependencies]
 # Runs the compiled rules on an embedded DuckDB (2.0.0, as verified).
 duckdb.workspace = true
+# The contract tier A's own Trino client (tests/trino), when QD_TRINO_URL is set.
+reqwest.workspace = true
+serde_json.workspace = true
+tokio.workspace = true

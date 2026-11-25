@@ -3064,6 +3064,9 @@ dependencies = [
  "quality-rules-compile",
  "quality-rules-model",
  "quality-rules-tree",
+ "reqwest",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
