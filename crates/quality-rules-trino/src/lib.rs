@@ -15,6 +15,7 @@ mod icd;
 mod loads;
 mod profile;
 mod read;
+mod retract;
 mod rules;
 mod scratch;
 
@@ -23,7 +24,7 @@ pub use extract::{
     bronze_type, create_bronze, create_catalog, extract, split, Connector, Conversion, Range,
 };
 pub use findings::{finding_groups, findings, queues, Findings};
-pub use gold::{install, GoldTable, DETAILS, GOLD, RUN_SUMMARY};
+pub use gold::{install, GoldTable, DETAILS, GOLD, REMEDIATION_SLAS, RUN_SUMMARY};
 pub use gold_write::{delete_older, flip, insert, older_rows, Run};
 pub use icd::{measured, scratch_insert, IcdRule, Measured, FINDINGS_KEY, SCRATCH};
 pub use loads::{
@@ -32,6 +33,9 @@ pub use loads::{
 };
 pub use profile::{field_profile, recency, shape_of, RECENCY_DAYS, SHAPE_LEN};
 pub use read::{current_snapshot, pinned, typed_select, Pinned, TablePath};
+pub use retract::{
+    dataset_rows, delete_dataset, delete_older_slas, insert_slas, older_slas, tombstone, Sla,
+};
 pub use rules::rule_counts;
 pub use scratch::{cells, entities, groups, means, scratch_delete, scratch_rows};
 
