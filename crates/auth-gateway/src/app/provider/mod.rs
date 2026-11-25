@@ -20,7 +20,8 @@ use crate::app::session::AuthenticatedSession;
 use crate::domain::{
     AccountPolicies, ActionHolder, AdminAccount, AdminRepository, AuthorizationCode,
     AuthorizationCodeStore, ClientId, Clock, MachineCertificate, MachineRegistry,
-    OAuthSecretGenerator, OidcClient, OidcClientRegistry, ResetTokenGenerator, TokenSigner,
+    OAuthSecretGenerator, OidcClient, OidcClientRegistry, ResetTokenGenerator, SigningAlg,
+    TokenSigner,
 };
 
 mod client_auth;
@@ -266,6 +267,19 @@ impl AuthorizationServer {
                 ["sub", "iss", "aud", "exp", "iat", "auth_time", "nonce", "email", "name", "role", "policy"],
             "authorization_response_iss_parameter_supported": true,
         })
+    }
+
+    /// `claims` signed with the ES256 key, for what the core signs that is
+    /// no application's token (decision 0090: a job's statement bundle,
+    /// which job runners verify against the JWK Set); `None` without that
+    /// key.
+    pub fn sign_es256(&self, typ: &str, claims: &str) -> Option<String> {
+        Some(self.signers.get(SigningAlg::ES256)?.sign(typ, claims))
+    }
+
+    /// The claims of what [`Self::sign_es256`] signed with `typ`.
+    pub fn verify_es256(&self, typ: &str, token: &str) -> Option<String> {
+        self.signers.get(SigningAlg::ES256)?.verify(typ, token)
     }
 
     /// The public keys (`/jwks`), of every algorithm.
