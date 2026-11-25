@@ -6,12 +6,14 @@
 //! (`FOR VERSION AS OF`); the cut is a bound parameter (`?`), in order.
 
 mod cells;
+mod findings;
 mod icd;
 mod profile;
 mod read;
 mod rules;
 mod scratch;
 
+pub use findings::{finding_groups, findings, queues, Findings};
 pub use icd::{measured, scratch_insert, IcdRule, Measured, FINDINGS_KEY, SCRATCH};
 pub use profile::{field_profile, recency, shape_of, RECENCY_DAYS, SHAPE_LEN};
 pub use read::{current_snapshot, pinned, typed_select, Pinned, TablePath};
