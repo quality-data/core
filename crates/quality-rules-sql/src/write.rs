@@ -1,8 +1,9 @@
-//! Writes the tree node by node, as DuckDB's SQL (verified 2026-10-30,
-//! DuckDB 2.0.0): DuckDB has no `regexp_like` and replaces only the first
-//! match unless told `'g'`; it trims the given characters and takes
-//! `INTERVAL '18' YEAR`, `TRY_CAST`, `date_diff`, windows and `?`
-//! parameters.
+//! Writes the tree node by node. Where the engines differ (verified
+//! 2026-10-30, DuckDB 2.0.0 and Trino 484) the writer says so: DuckDB has
+//! no `regexp_like` and replaces only the first match unless told `'g'`;
+//! both take `trim(BOTH … FROM …)` (each names its set: their one-argument
+//! `trim` differ, decision 0090 T1), `INTERVAL '18' YEAR`, `TRY_CAST`,
+//! `date_diff`, windows and `?` parameters the same way.
 
 use quality_rules_tree::{BinaryOp, Expr, Function, IntervalUnit, Literal, Type};
 
@@ -129,6 +130,7 @@ impl<'a> Writer<'a> {
                 self.text_of(x)?;
                 self.push(match self.engine {
                     Engine::DuckDb => r", '[^\p{L}\p{N}]', '', 'g'))",
+                    Engine::Trino => r", '[^\p{L}\p{N}]', ''))",
                 });
             }
             Expr::Duplicated(key) => {
@@ -163,7 +165,7 @@ impl<'a> Writer<'a> {
 
     fn binary(&mut self, op: BinaryOp, left: &Expr, right: &Expr) -> Result<(), Error> {
         if op == BinaryOp::Divide {
-            // A division is of doubles, whatever its operands' types.
+            // Trino divides integers as integers; both divide doubles alike.
             self.wrap("(CAST(", left, " AS DOUBLE) / ")?;
             return self.wrap("", right, ")");
         }
@@ -207,6 +209,7 @@ impl<'a> Writer<'a> {
     fn regex(&mut self, e: &Expr, pattern: &str) -> Result<(), Error> {
         self.push(match self.engine {
             Engine::DuckDb => "regexp_matches(",
+            Engine::Trino => "regexp_like(",
         });
         self.text_of(e)?;
         self.push(&format!(", {})", quote_text(&format!("^(?:{pattern})$"))?));
@@ -216,14 +219,14 @@ impl<'a> Writer<'a> {
     fn call(&mut self, function: Function, args: &[Expr]) -> Result<(), Error> {
         match (function, args) {
             (Function::IsEmpty, [x]) => {
-                self.wrap("(", x, " IS NULL OR trim(")?;
+                self.wrap("(", x, &format!(" IS NULL OR trim(BOTH {BLANKS} FROM "))?;
                 self.text_of(x)?;
-                self.push(&format!(", {BLANKS}) = '')"));
+                self.push(") = '')");
             }
             (Function::Trim, [x]) => {
-                self.push("trim(");
+                self.push(&format!("trim(BOTH {BLANKS} FROM "));
                 self.text_of(x)?;
-                self.push(&format!(", {BLANKS})"));
+                self.push(")");
             }
             (Function::Length, [x]) => {
                 self.push("length(");
@@ -322,7 +325,7 @@ fn op_sql(op: BinaryOp) -> &'static str {
     }
 }
 
-/// The functions spelled as the tree names them.
+/// The functions both engines spell alike.
 fn plain_name(f: Function) -> &'static str {
     match f {
         Function::Upper => "upper",

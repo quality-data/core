@@ -253,7 +253,7 @@
       "qr007": "El valor {{value}} de {{parameter}} no corresponde al tipo del campo",
       "qr008": "Todavía no se compila: {{what}}",
       "qr009": "Otra regla ya usa el id {{id}}",
-      "qr010": "La expresión regular usa {{construct}}, que RE2 no tiene: DuckDB no puede ejecutarla",
+      "qr010": "La expresión regular usa {{construct}}, que RE2 o RE2J no tienen: fallaría o no significaría lo mismo en DuckDB y en Trino",
       "qr011": "El ejemplo {{index}} debía {{expected}}, pero al probarlo da: {{got}}",
       "qr012": "{{name}} no es una regla con nombre de las reglas globales de la tabla",
       "qr013": "{{name}} ({{kind}}) ya está declarado en las reglas globales de la tabla: quítalo de aquí o cámbiale el nombre",

@@ -29,7 +29,7 @@ pub mod check {
     pub use quality_rules_compile::*;
 }
 
-/// The tree as DuckDB's SQL.
+/// The tree as DuckDB's and Trino's SQL.
 pub mod sql {
     pub use quality_rules_sql::*;
 }

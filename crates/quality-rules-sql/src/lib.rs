@@ -1,8 +1,8 @@
-//! The neutral tree written as DuckDB's SQL (decisions 0019, point 3, and
-//! 0077). Only the tree reaches SQL, and only through here (decision 0033,
-//! point 6): fields are quoted, values are escaped literals checked for
-//! their type, `:cut` is a bound parameter, and every function is fixed
-//! SQL.
+//! The neutral tree written as each engine's SQL (decision 0019, point 3).
+//! Only the tree reaches SQL, and only through here (decision 0033, point
+//! 6): fields are quoted, values are escaped literals checked for their
+//! type, `:cut` is a bound parameter, and every function is fixed SQL per
+//! engine. The same tree gives DuckDB and Trino; tests run both.
 
 pub mod distribution;
 mod formats;
@@ -18,6 +18,7 @@ pub use formats::regex as format_regex;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Engine {
     DuckDb,
+    Trino,
 }
 
 /// A statement's SQL and how many times the cut's date must be bound to
@@ -73,7 +74,7 @@ pub fn quote_ident(name: &str) -> Result<String, Error> {
     Ok(format!("\"{}\"", name.replace('"', "\"\"")))
 }
 
-/// A text between single quotes, inner quotes doubled. DuckDB does not read
+/// A text between single quotes, inner quotes doubled. Neither engine reads
 /// `\` as an escape in a literal (verified, decision 0033); control
 /// characters but the tab are refused (DuckDB would keep a NUL).
 pub fn quote_text(text: &str) -> Result<String, Error> {

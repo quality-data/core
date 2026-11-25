@@ -68,6 +68,7 @@ fn explains_a_required_rule_in_spanish_and_english() {
         .text(Language::En)
         .starts_with("Applies to: client_type is «PN»"));
     assert!(e.duckdb.unwrap().starts_with("CASE WHEN (NOT coalesce("));
+    assert!(e.trino.is_some());
 }
 
 #[test]

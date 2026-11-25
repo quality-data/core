@@ -167,8 +167,8 @@ fn is_constant(e: &Expr) -> bool {
     })
 }
 
-/// What RE2 (DuckDB's) lacks: a pattern that uses it fails or means
-/// something else (decision 0033, point 6).
+/// What RE2 (DuckDB) and RE2J (Trino) lack: a pattern that uses it fails on
+/// one engine or means something else (decision 0033, point 6).
 fn regexes(file: &RulesFile, c: &Compiled, out: &mut Vec<Finding>) {
     let tree = [&c.applies, &c.fails];
     for node in tree.iter().flat_map(|e| e.walk()) {

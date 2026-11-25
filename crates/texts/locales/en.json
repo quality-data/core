@@ -253,7 +253,7 @@
       "qr007": "The value {{value}} of {{parameter}} does not fit the field's type",
       "qr008": "Not compiled yet: {{what}}",
       "qr009": "Another rule already uses the id {{id}}",
-      "qr010": "The regular expression uses {{construct}}, which RE2 lacks: DuckDB cannot run it",
+      "qr010": "The regular expression uses {{construct}}, which RE2 or RE2J lacks: it would fail or not mean the same on DuckDB and Trino",
       "qr011": "Example {{index}} should {{expected}}, but it gives: {{got}}",
       "qr012": "{{name}} is not a named rule of the table's global rules",
       "qr013": "{{name}} ({{kind}}) is already declared by the table's global rules: take it away from here or rename it",

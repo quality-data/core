@@ -11,8 +11,8 @@ publish = false
 [lints]
 workspace = true
 
-# The neutral tree written as DuckDB's SQL (decisions 0019, point 3; 0033,
-# point 6): fields quoted, values escaped, `:cut` bound. Pure.
+# The neutral tree written as DuckDB's and Trino's SQL (decisions 0019,
+# point 3; 0033, point 6): fields quoted, values escaped, `:cut` bound. Pure.
 [dependencies]
 quality-rules-compile.workspace = true
 quality-rules-model.workspace = true

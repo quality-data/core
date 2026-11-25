@@ -1,6 +1,6 @@
 //! The named formats (decision 0033, point 1): maintained by the platform,
-//! each a regular expression of RE2's syntax, anchored to the whole value
-//! by the writer and tested on DuckDB.
+//! each a regular expression of the syntax RE2 and RE2J share, anchored to
+//! the whole value by the writer and tested on both engines.
 
 use quality_rules_model::NamedFormat;
 

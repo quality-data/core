@@ -156,13 +156,13 @@ async fn mains_rules_are_read_each_in_words() {
         "applies",
         "fails",
         "duckdb",
+        "trino",
     ] {
         assert!(
             rule[part].as_str().is_some_and(|s| !s.is_empty()),
             "{part}: {rule}"
         );
     }
-    assert!(rule.get("trino").is_none(), "one engine: {rule}");
 }
 
 #[tokio::test]

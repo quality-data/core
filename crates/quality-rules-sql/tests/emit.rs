@@ -1,13 +1,19 @@
 //! What the writer emits: names quoted, values escaped and checked, the cut
-//! bound, and DuckDB's own spelling (decision 0033, point 6).
+//! bound, and the engines' differences (decision 0033, point 6).
 
 use quality_rules_sql::{expr, quote_ident, quote_text, Engine, Error, Table, Tables};
 use quality_rules_tree::{parse_expr, Expr, Function, Literal};
 
-fn sql(text: &str) -> String {
-    expr(&parse_expr(text).unwrap(), Engine::DuckDb, &Tables::new())
+fn sql(text: &str, engine: Engine) -> String {
+    expr(&parse_expr(text).unwrap(), engine, &Tables::new())
         .unwrap()
         .text
+}
+
+fn both(text: &str) -> String {
+    let d = sql(text, Engine::DuckDb);
+    assert_eq!(d, sql(text, Engine::Trino), "{text}");
+    d
 }
 
 #[test]
@@ -21,7 +27,7 @@ fn quotes_names_and_texts() {
     assert_eq!(quote_text("a\u{0}b"), Err(Error::ControlCharacter));
     assert_eq!(quote_ident("a\nb"), Err(Error::ControlCharacter));
     assert_eq!(
-        sql("\"Campo con espacio\" = 'it''s'"),
+        both("\"Campo con espacio\" = 'it''s'"),
         "(\"Campo con espacio\" = 'it''s')"
     );
 }
@@ -42,7 +48,7 @@ fn checks_numbers_and_dates_it_did_not_parse() {
     );
     let date = expr(
         &Expr::Literal(Literal::Date("2024-01-31' OR '1".into())),
-        Engine::DuckDb,
+        Engine::Trino,
         &Tables::new(),
     );
     assert!(matches!(date, Err(Error::BadDate(_))));
@@ -52,7 +58,7 @@ fn checks_numbers_and_dates_it_did_not_parse() {
 fn binds_the_cut() {
     let s = expr(
         &parse_expr("a < :cut AND b > :cut - INTERVAL 13 MONTH").unwrap(),
-        Engine::DuckDb,
+        Engine::Trino,
         &Tables::new(),
     )
     .unwrap();
@@ -64,35 +70,42 @@ fn binds_the_cut() {
 }
 
 #[test]
-fn writes_duckdbs_own_spelling() {
+fn writes_what_the_engines_spell_differently() {
     assert_eq!(
-        sql("regexp_like(x, '3\\d{9}')"),
+        sql("regexp_like(x, '3\\d{9}')", Engine::DuckDb),
         "regexp_matches(CAST(\"x\" AS VARCHAR), '^(?:3\\d{9})$')"
     );
-    let normalized = expr(
-        &Expr::Normalized(Box::new(Expr::Field("d".into()))),
-        Engine::DuckDb,
-        &Tables::new(),
-    )
-    .unwrap()
-    .text;
-    assert!(normalized.ends_with("'', 'g'))"));
+    assert_eq!(
+        sql("regexp_like(x, '3\\d{9}')", Engine::Trino),
+        "regexp_like(CAST(\"x\" AS VARCHAR), '^(?:3\\d{9})$')"
+    );
+    let n = |engine| {
+        expr(
+            &Expr::Normalized(Box::new(Expr::Field("d".into()))),
+            engine,
+            &Tables::new(),
+        )
+        .unwrap()
+        .text
+    };
+    assert!(n(Engine::DuckDb).ends_with("'', 'g'))"));
+    assert!(n(Engine::Trino).ends_with("''))"));
 }
 
 #[test]
 fn writes_the_platforms_functions() {
     assert_eq!(
-        sql("is_empty(x)"),
-        "(\"x\" IS NULL OR trim(CAST(\"x\" AS VARCHAR), concat(' ', chr(160))) = '')"
+        both("is_empty(x)"),
+        "(\"x\" IS NULL OR trim(BOTH concat(' ', chr(160)) FROM CAST(\"x\" AS VARCHAR)) = '')"
     );
-    assert_eq!(sql("x / 2"), "(CAST(\"x\" AS DOUBLE) / 2)");
-    assert_eq!(sql("CAST(x AS INTEGER)"), "TRY_CAST(\"x\" AS BIGINT)");
-    assert_eq!(sql("x LIKE 'a%'"), "(\"x\" LIKE 'a%' ESCAPE '\\')");
-    assert!(sql("years_between(a, :cut)")
+    assert_eq!(both("x / 2"), "(CAST(\"x\" AS DOUBLE) / 2)");
+    assert_eq!(both("CAST(x AS INTEGER)"), "TRY_CAST(\"x\" AS BIGINT)");
+    assert_eq!(both("x LIKE 'a%'"), "(\"x\" LIKE 'a%' ESCAPE '\\')");
+    assert!(both("years_between(a, :cut)")
         .starts_with("(year(CAST(? AS DATE)) - year(\"a\") - CASE WHEN"));
     let dup = Expr::Duplicated(vec![Expr::Field("k".into())]);
     assert_eq!(
-        expr(&dup, Engine::DuckDb, &Tables::new()).unwrap().text,
+        expr(&dup, Engine::Trino, &Tables::new()).unwrap().text,
         "(count(*) OVER (PARTITION BY \"k\") > 1)"
     );
 }
@@ -108,7 +121,7 @@ fn a_reference_reads_the_table_the_platform_resolved() {
     };
     let mut tables = Tables::new();
     assert_eq!(
-        expr(&e, Engine::DuckDb, &tables),
+        expr(&e, Engine::Trino, &tables),
         Err(Error::UnknownReference("advisors.Codigo".into()))
     );
     tables.insert(
@@ -119,7 +132,7 @@ fn a_reference_reads_the_table_the_platform_resolved() {
         },
     );
     assert_eq!(
-        expr(&e, Engine::DuckDb, &tables).unwrap().text,
+        expr(&e, Engine::Trino, &tables).unwrap().text,
         "(\"CodigoAsesor\" IN (SELECT \"Codigo\" FROM \"lake\".\"advisors_silver\".\"advisors\" WHERE \"Codigo\" IS NOT NULL))"
     );
 }

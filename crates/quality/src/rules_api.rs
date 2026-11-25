@@ -96,6 +96,7 @@ pub struct RuleView {
     pub skips: Option<String>,
     /// Its SQL on DuckDB, unless it reads a reference not resolved here.
     pub duckdb: Option<String>,
+    pub trino: Option<String>,
     /// The named rule it extends and the line that says so: this rule,
     /// as read, is what it does (decision 0045).
     pub extends: Option<ExtendsOut>,
@@ -224,6 +225,7 @@ pub(crate) fn view(
                 fails: e.fails,
                 skips: e.skips,
                 duckdb: e.duckdb,
+                trino: e.trino,
                 extends: extends(&rule.id),
             }
         })
