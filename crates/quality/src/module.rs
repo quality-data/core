@@ -7,6 +7,7 @@ use axum::Router;
 use contracts::{Drain, Migration, Module};
 use sqlx::PgPool;
 
+use crate::bundle_api::{self, BundleServices};
 use crate::catalog::Catalog;
 use crate::chart_api;
 use crate::console_api;
@@ -42,6 +43,7 @@ pub struct QualityModule {
     sources: Option<SourceServices>,
     patterns: Patterns,
     drafts: Option<Arc<dyn DraftCatalog>>,
+    bundles: Option<(PgPool, BundleServices)>,
 }
 
 /// What the sources' routes use: the store, its sealer, and the catalog.
@@ -68,6 +70,7 @@ impl QualityModule {
             sources: None,
             patterns: Patterns::default(),
             drafts: None,
+            bundles: None,
         }
     }
 
@@ -94,6 +97,13 @@ impl QualityModule {
     #[must_use]
     pub fn with_patterns(mut self, patterns: Patterns) -> Self {
         self.patterns = patterns;
+        self
+    }
+
+    /// With the bundle route for job runners (decision 0090, point 2).
+    #[must_use]
+    pub fn with_bundles(mut self, pool: PgPool, services: BundleServices) -> Self {
+        self.bundles = Some((pool, services));
         self
     }
 
@@ -151,6 +161,7 @@ impl Module for QualityModule {
             migration!("0027_claim_in_maintenance"),
             migration!("0028_claim_without_trino_hold"),
             migration!("0029_gold_run_seq"),
+            migration!("0030_job_bundles"),
             migration!("0031_field_quality_floating"),
         ]
     }
@@ -166,9 +177,15 @@ impl Module for QualityModule {
     }
 
     fn router(&self) -> Router {
-        match &self.workers {
+        let workers = match &self.workers {
             Some((pool, services)) => worker_api::routes(pool.clone(), services.clone()),
             None => Router::new(),
+        };
+        match &self.bundles {
+            Some((pool, services)) => {
+                workers.merge(bundle_api::routes(pool.clone(), services.clone()))
+            }
+            None => workers,
         }
     }
 
