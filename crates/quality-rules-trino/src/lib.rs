@@ -32,6 +32,7 @@ pub use loads::{
     LOAD,
 };
 pub use profile::{field_profile, recency, shape_of, RECENCY_DAYS, SHAPE_LEN};
+pub use quality_rules_sql::ShapeKind;
 pub use read::{current_snapshot, pinned, typed_select, Pinned, TablePath};
 pub use retract::{
     dataset_rows, delete_dataset, delete_older_slas, delete_run_slas, insert_slas, older_slas,
