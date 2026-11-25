@@ -11,6 +11,7 @@ mod findings;
 mod gold;
 mod gold_write;
 mod icd;
+mod loads;
 mod profile;
 mod read;
 mod rules;
@@ -21,6 +22,10 @@ pub use findings::{finding_groups, findings, queues, Findings};
 pub use gold::{install, GoldTable, DETAILS, GOLD, RUN_SUMMARY};
 pub use gold_write::{delete_older, flip, insert, older_rows, Run};
 pub use icd::{measured, scratch_insert, IcdRule, Measured, FINDINGS_KEY, SCRATCH};
+pub use loads::{
+    accepted, create_silver, delete_load, derive_silver, loads_of_cut, migrate_to_loads, Accepted,
+    LOAD,
+};
 pub use profile::{field_profile, recency, shape_of, RECENCY_DAYS, SHAPE_LEN};
 pub use read::{current_snapshot, pinned, typed_select, Pinned, TablePath};
 pub use rules::rule_counts;

@@ -156,7 +156,7 @@ pub(crate) fn with_role(mapping: &Mapping, role: FieldRole) -> Vec<&String> {
 
 /// `names` normalized as one key (a document's digits without leading
 /// zeros, any other trimmed of spaces and upper case), joined by `|`.
-fn key(mapping: &Mapping, names: &[&String]) -> Result<String, Error> {
+pub(crate) fn key(mapping: &Mapping, names: &[&String]) -> Result<String, Error> {
     let mut parts = Vec::new();
     for name in names {
         let document = mapping.fields[*name].value.semantic == Some(Semantic::Document);
