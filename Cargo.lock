@@ -3018,7 +3018,11 @@ dependencies = [
  "quality-rules-model",
  "quality-rules-sql",
  "quality-rules-tree",
+ "quality-rules-trino",
+ "reqwest",
+ "serde_json",
  "sha2 0.10.9",
+ "tokio",
 ]
 
 [[package]]
