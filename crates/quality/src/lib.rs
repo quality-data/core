@@ -4,6 +4,7 @@
 //! with M2, through `contracts`.
 
 pub mod bundle;
+pub mod bundle_api;
 pub mod catalog;
 pub mod chart_api;
 pub mod charts;
