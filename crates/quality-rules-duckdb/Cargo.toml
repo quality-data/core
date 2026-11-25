@@ -23,7 +23,8 @@ quality-rules-lint.workspace = true
 quality-rules-model.workspace = true
 quality-rules-sql.workspace = true
 quality-rules-tree.workspace = true
+# Silver's frozen legacy digest (src/silver_legacy.rs, decision 0090).
+sha2.workspace = true
 
 [dev-dependencies]
 hmac.workspace = true
-sha2.workspace = true
