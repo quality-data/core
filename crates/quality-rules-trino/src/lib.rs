@@ -7,6 +7,7 @@
 
 mod cells;
 mod distribution;
+mod extract;
 mod findings;
 mod gold;
 mod gold_write;
@@ -18,6 +19,9 @@ mod rules;
 mod scratch;
 
 pub use distribution::{outliers, variable_percentiles, Method};
+pub use extract::{
+    bronze_type, create_bronze, create_catalog, extract, split, Connector, Conversion, Range,
+};
 pub use findings::{finding_groups, findings, queues, Findings};
 pub use gold::{install, GoldTable, DETAILS, GOLD, RUN_SUMMARY};
 pub use gold_write::{delete_older, flip, insert, older_rows, Run};
