@@ -25,7 +25,7 @@ pub use extract::{
 };
 pub use findings::{finding_groups, findings, queues, Findings};
 pub use gold::{install, GoldTable, DETAILS, GOLD, REMEDIATION_SLAS, RUN_SUMMARY};
-pub use gold_write::{delete_older, flip, insert, older_rows, Run};
+pub use gold_write::{delete_older, delete_run, flip, insert, older_rows, run_rows, Run};
 pub use icd::{measured, scratch_insert, IcdRule, Measured, FINDINGS_KEY, SCRATCH};
 pub use loads::{
     accepted, create_silver, delete_load, derive_silver, loads_of_cut, migrate_to_loads, Accepted,
@@ -34,7 +34,8 @@ pub use loads::{
 pub use profile::{field_profile, recency, shape_of, RECENCY_DAYS, SHAPE_LEN};
 pub use read::{current_snapshot, pinned, typed_select, Pinned, TablePath};
 pub use retract::{
-    dataset_rows, delete_dataset, delete_older_slas, insert_slas, older_slas, tombstone, Sla,
+    dataset_rows, delete_dataset, delete_older_slas, delete_run_slas, insert_slas, older_slas,
+    run_slas, tombstone, Sla,
 };
 pub use rules::rule_counts;
 pub use scratch::{cells, entities, groups, means, scratch_delete, scratch_rows};
