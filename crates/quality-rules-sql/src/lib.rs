@@ -4,6 +4,7 @@
 //! their type, `:cut` is a bound parameter, and every function is fixed
 //! SQL.
 
+pub mod distribution;
 mod formats;
 mod write;
 
