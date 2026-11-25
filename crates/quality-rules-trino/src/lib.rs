@@ -8,6 +8,8 @@
 mod cells;
 mod distribution;
 mod findings;
+mod gold;
+mod gold_write;
 mod icd;
 mod profile;
 mod read;
@@ -16,6 +18,8 @@ mod scratch;
 
 pub use distribution::{outliers, variable_percentiles, Method};
 pub use findings::{finding_groups, findings, queues, Findings};
+pub use gold::{install, GoldTable, DETAILS, GOLD, RUN_SUMMARY};
+pub use gold_write::{delete_older, flip, insert, older_rows, Run};
 pub use icd::{measured, scratch_insert, IcdRule, Measured, FINDINGS_KEY, SCRATCH};
 pub use profile::{field_profile, recency, shape_of, RECENCY_DAYS, SHAPE_LEN};
 pub use read::{current_snapshot, pinned, typed_select, Pinned, TablePath};
