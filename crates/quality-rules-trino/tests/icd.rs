@@ -1,10 +1,13 @@
 //! The ICD's statements on Trino (decision 0090, step 11): one scratch
-//! insert with the keys hashed in the engine.
+//! insert with the keys hashed in the engine, and the reads back.
 
 use quality::mapping::Mapping;
 use quality_rules_compile::{compile, FieldType, Schema};
 use quality_rules_sql::Tables;
-use quality_rules_trino::{scratch_insert, IcdRule, FINDINGS_KEY, SCRATCH};
+use quality_rules_trino::{
+    cells, entities, groups, means, measured, scratch_delete, scratch_insert, scratch_rows,
+    IcdRule, FINDINGS_KEY, SCRATCH,
+};
 
 const MAPPING: &str = "dataset: loans
 source: loans
@@ -84,4 +87,43 @@ fn the_scratch_insert_evaluates_once_and_hashes_in_the_engine() {
         "the rules' and the A component's"
     );
     assert_eq!(s.sql.matches('?').count(), s.cut_params);
+}
+
+#[test]
+fn the_reads_back_name_the_job_and_the_arrays_by_position() {
+    let (mapping, rules) = setup();
+    let fields = measured(&mapping, &rules);
+    let names: Vec<&str> = fields.iter().map(|f| f.name.as_str()).collect();
+    assert_eq!(names, ["Amount", "Phone", "Type"]);
+    let at = format!("{SCRATCH} WHERE job_id = '{JOB}'");
+    let m = means(JOB, &fields).unwrap();
+    assert_eq!(
+        m.sql,
+        format!(
+            "SELECT avg(icd), avg(element_at(f, 1)), avg(element_at(f, 2)), \
+             avg(element_at(f, 3)) FROM {at}"
+        )
+    );
+    let e = entities(JOB, &fields).unwrap().sql;
+    assert!(
+        e.contains("min(element_at(f, 2)) AS \"e1\""),
+        "Phone is critical"
+    );
+    assert!(e.contains("ORDER BY n DESC NULLS LAST, s ASC NULLS LAST"));
+    let g = groups(JOB, &mapping).unwrap();
+    assert_eq!(g.len(), 1);
+    assert!(g[0].sql.contains("GROUP BY element_at(g, 1)"));
+    assert!(cells(JOB, 1).unwrap().sql.contains("element_at(c, 1)"));
+    assert_eq!(
+        scratch_rows(JOB).unwrap().sql,
+        format!("SELECT count(*) FROM {at}")
+    );
+    assert_eq!(
+        scratch_delete(JOB).unwrap().sql,
+        format!("DELETE FROM {at}")
+    );
+    assert!(scratch_delete("a'; DROP")
+        .unwrap()
+        .sql
+        .ends_with("'a''; DROP'"));
 }
