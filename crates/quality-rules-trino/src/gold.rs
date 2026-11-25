@@ -127,6 +127,18 @@ pub const DETAILS: &[GoldTable] = &[
     },
 ];
 
+/// `remediation_slas`: a dataset's SLAs by queue, no cut (ruled by the
+/// user 2026-11-25, an exception to point 3.2); a `slas` job replaces them.
+pub const REMEDIATION_SLAS: GoldTable = GoldTable {
+    name: "remediation_slas",
+    columns: &[
+        ("dimension", TEXT),
+        ("grp", TEXT),
+        ("days", "INTEGER"),
+        ("updated_at", "TIMESTAMP(6) WITH TIME ZONE"),
+    ],
+};
+
 /// The schema gold's tables live in, in the lake catalog.
 pub const GOLD: &str = "\"lake\".\"quality_gold\"";
 
@@ -165,6 +177,18 @@ pub fn install() -> Vec<Statement> {
             .iter()
             .map(|t| plain(create(t, "'dataset', 'cut', 'run_id'"))),
     );
+    let mut slas = vec!["dataset VARCHAR".to_string(), "run_id VARCHAR".to_string()];
+    slas.extend(
+        REMEDIATION_SLAS
+            .columns
+            .iter()
+            .map(|(n, ty)| format!("\"{n}\" {ty}")),
+    );
+    out.push(plain(format!(
+        "CREATE TABLE IF NOT EXISTS {GOLD}.\"remediation_slas\" ({}) \
+         WITH (partitioning = ARRAY['dataset', 'run_id'])",
+        slas.join(", ")
+    )));
     out.push(plain(format!(
         "CREATE OR REPLACE VIEW {GOLD}.\"current_run\" SECURITY INVOKER AS \
          SELECT dataset, cut, max_by(run_id, run_seq) AS run_id \
