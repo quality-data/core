@@ -203,8 +203,31 @@ jobs:
         run: cargo xtask sizes
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # The contract tier A (decision 0090, step 9): the same SQL on DuckDB
+      # and on Trino 484, which runs RE2J. One node, no lake; removed below.
+      - name: Start Trino for the contract tier A
+        run: |
+          mkdir -p "$RUNNER_TEMP/trino"
+          printf '%s\n' coordinator=true node-scheduler.include-coordinator=true \
+            http-server.http.port=8080 discovery.uri=http://localhost:8080 \
+            regex-library=RE2J > "$RUNNER_TEMP/trino/config.properties"
+          docker run -d --name "qd-ci-trino-${{ github.run_id }}" --memory 3g \
+            -p 127.0.0.1:18484:8080 \
+            -v "$RUNNER_TEMP/trino/config.properties:/etc/trino/config.properties:ro" \
+            trinodb/trino:484
+          for _ in $(seq 1 90); do
+            if curl -sf http://127.0.0.1:18484/v1/info | grep -q '"starting":false'; then exit 0; fi
+            sleep 2
+          done
+          docker logs "qd-ci-trino-${{ github.run_id }}" | tail -40
+          exit 1
       - name: Test
         run: cargo test --workspace --locked
+        env:
+          QD_TRINO_URL: http://127.0.0.1:18484
+      - name: Remove Trino
+        if: always()
+        run: docker rm -f "qd-ci-trino-${{ github.run_id }}" || true
       - name: Build
         run: cargo build --workspace --all-targets --locked
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
