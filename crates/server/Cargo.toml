@@ -36,10 +36,9 @@ tracing.workspace = true
 logging.workspace = true
 # The API's metrics file: its registry and the queue's gauges (decision 0071).
 prometheus-client.workspace = true
-# The rule language and its DuckDB runner, for `server quality rules`.
+# The rule language, for `server quality rules` (lint, explain, tidy).
 quality.workspace = true
 quality-rules.workspace = true
-quality-rules-duckdb.workspace = true
 # The bundles' compiler for Trino (decision 0090, amendment A1).
 quality-jobs.workspace = true
 quality-rules-trino.workspace = true
