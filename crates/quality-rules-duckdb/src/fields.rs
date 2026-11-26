@@ -53,6 +53,7 @@ impl Runner {
                         distinct: r.get(1)?,
                         pattern: r.get(2)?,
                         pattern_count: r.get(3)?,
+                        floating: kind == ShapeKind::Float,
                         icd: None,
                         recency: None,
                     })
@@ -93,6 +94,7 @@ mod tests {
                 distinct: 80,
                 pattern: Some("A9999".into()),
                 pattern_count: 70,
+                floating: false,
                 icd: None,
                 recency: None,
             }
@@ -112,7 +114,7 @@ mod tests {
             (profile[2].distinct, profile[2].pattern.as_deref()),
             (100, None)
         );
-        assert_eq!(profile[2].pattern_count, 0);
+        assert_eq!((profile[2].pattern_count, profile[2].floating), (0, true));
         assert_eq!(profile[3].pattern.as_deref(), Some("9.9999"));
         assert!(runner.field_quality("loans", &["Ghost"]).is_err());
     }

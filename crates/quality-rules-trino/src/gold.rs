@@ -61,6 +61,7 @@ pub const DETAILS: &[GoldTable] = &[
             ("distinct_values", BIGINT),
             ("pattern", TEXT),
             ("pattern_count", BIGINT),
+            ("floating", "BOOLEAN"),
             ("mean_icd", DOUBLE),
             ("recency", "ARRAY(BIGINT)"),
         ],
