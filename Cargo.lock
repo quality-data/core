@@ -2988,6 +2988,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "quality-jobs"
+version = "0.1.0"
+dependencies = [
+ "quality",
+ "quality-rules-trino",
+]
+
+[[package]]
 name = "quality-rules"
 version = "0.1.0"
 dependencies = [
