@@ -18,6 +18,7 @@ mod gold_scratch;
 mod gold_summary;
 mod gold_write;
 mod icd;
+mod job_counts;
 mod loads;
 mod profile;
 mod read;
@@ -38,6 +39,9 @@ pub use gold_scratch::{cell_rows, entity_icd, group_metrics};
 pub use gold_summary::{started_ms, summary, Summary};
 pub use gold_write::{delete_older, delete_run, flip, insert, older_rows, run_rows, Run};
 pub use icd::{measured, scratch_insert, IcdRule, Measured, FINDINGS_KEY, SCRATCH};
+pub use job_counts::{
+    count_into, count_read, delete_run_counts, run_counts, COUNT_COLUMN, JOB_COUNTS,
+};
 pub use loads::{
     accepted, create_silver, delete_load, derive_silver, loads_of_cut, migrate_to_loads, Accepted,
     LOAD,

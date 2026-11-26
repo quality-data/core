@@ -170,7 +170,8 @@ fn plain(sql: String) -> Statement {
 }
 
 /// The install's statements, in order: the schemas, gold's tables, the
-/// views people read, the scratch table and the findings key's table.
+/// views people read, the jobs' counts (ruling 53), the scratch table and
+/// the findings key's table.
 /// Each can run twice. The views join with `ON`, never `USING` with `t.*`
 /// (T2: `t.*` after `USING` drops the join columns, and a row filter on
 /// `dataset` then fails).
@@ -212,6 +213,7 @@ pub fn install() -> Vec<Statement> {
             n = t.name
         )));
     }
+    out.push(crate::job_counts::create());
     out.push(plain(format!(
         "CREATE TABLE IF NOT EXISTS {} (job_id VARCHAR, dataset VARCHAR, k VARCHAR, \
          r_key VARCHAR, s VARCHAR, a DOUBLE, serious BOOLEAN, act BOOLEAN, icd DOUBLE, \
@@ -253,6 +255,9 @@ mod tests {
         assert!(entities.contains("\"entity\" VARCHAR, \"icd\" DOUBLE, \"band\" VARCHAR"));
         assert!(entities.ends_with("ARRAY['dataset', 'cut', 'run_id'])"));
         assert!(sql.iter().any(|s| s.contains("v_entity_icd")));
+        assert!(sql
+            .iter()
+            .any(|s| s.contains("\"job_counts\" (dataset VARCHAR, run VARCHAR")));
         let views: Vec<&&str> = sql.iter().filter(|s| s.contains("VIEW")).collect();
         assert_eq!(views.len(), 2 + DETAILS.len());
         for v in views {
