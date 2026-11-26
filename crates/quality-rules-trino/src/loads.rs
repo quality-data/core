@@ -229,6 +229,30 @@ pub fn loads_of_cut(t: &TablePath, cut: &Cut) -> Result<Statement, Error> {
     )))
 }
 
+/// A load's rows of a cut, counted: an extract's retry deletes its own
+/// earlier attempt's rows only after this showed some (decision 0090,
+/// ruling 67).
+pub fn load_rows(t: &TablePath, cut: &Cut, load: &str) -> Result<Statement, Error> {
+    Ok(plain(format!(
+        "SELECT count(*) FROM {} WHERE cut = {} AND {LOAD} = {}",
+        table(t)?,
+        cut.literal(),
+        quote_text(load)?
+    )))
+}
+
+/// A table's columns and their types as Trino declares them, in order:
+/// what an extract reports of bronze (ruling 64).
+pub fn table_columns(t: &TablePath) -> Result<Statement, Error> {
+    Ok(plain(format!(
+        "SELECT column_name, data_type FROM {}.\"information_schema\".\"columns\" \
+         WHERE table_schema = {} AND table_name = {} ORDER BY ordinal_position",
+        quoted(&t.catalog)?,
+        quote_text(&t.namespace)?,
+        quote_text(&t.table)?
+    )))
+}
+
 /// A superseded load's rows, by partition only: whole files go.
 pub fn delete_load(t: &TablePath, cut: &Cut, load: &str) -> Result<Statement, Error> {
     Ok(plain(format!(
