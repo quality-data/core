@@ -26,6 +26,7 @@ use crate::proposal::Patterns;
 use crate::records_api;
 use crate::rule_test;
 use crate::rules_api;
+use crate::run_report_api::{self, RunReportServices};
 use crate::run_source_api::{self, RunSourceServices};
 use crate::run_token_api::{self, RunTokenServices};
 use crate::schedule_api;
@@ -48,6 +49,7 @@ pub struct QualityModule {
     bundles: Option<(PgPool, BundleServices)>,
     run_tokens: Option<(PgPool, RunTokenServices)>,
     run_sources: Option<(PgPool, RunSourceServices)>,
+    run_reports: Option<(PgPool, RunReportServices)>,
 }
 
 /// What the sources' routes use: the store, its sealer, and the catalog.
@@ -77,6 +79,7 @@ impl QualityModule {
             bundles: None,
             run_tokens: None,
             run_sources: None,
+            run_reports: None,
         }
     }
 
@@ -126,6 +129,14 @@ impl QualityModule {
     #[must_use]
     pub fn with_run_sources(mut self, pool: PgPool, services: RunSourceServices) -> Self {
         self.run_sources = Some((pool, services));
+        self
+    }
+
+    /// With the route that takes a run's report from its job runner
+    /// (decision 0090, rulings 75 and 76).
+    #[must_use]
+    pub fn with_run_reports(mut self, pool: PgPool, services: RunReportServices) -> Self {
+        self.run_reports = Some((pool, services));
         self
     }
 
@@ -185,6 +196,7 @@ impl Module for QualityModule {
             migration!("0029_gold_run_seq"),
             migration!("0030_job_bundles"),
             migration!("0031_field_quality_floating"),
+            migration!("0032_job_reports"),
         ]
     }
 
@@ -215,9 +227,15 @@ impl Module for QualityModule {
             }
             None => workers,
         };
-        match &self.run_sources {
+        let workers = match &self.run_sources {
             Some((pool, services)) => {
                 workers.merge(run_source_api::routes(pool.clone(), services.clone()))
+            }
+            None => workers,
+        };
+        match &self.run_reports {
+            Some((pool, services)) => {
+                workers.merge(run_report_api::routes(pool.clone(), services.clone()))
             }
             None => workers,
         }

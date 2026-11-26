@@ -74,6 +74,13 @@ pub(crate) fn serving(
     let run_tokens = provider
         .clone()
         .and_then(|p| run_token_services(p, pool.clone()));
+    let run_reports = provider.clone().and_then(|p| {
+        p.sign_es256(quality::bundle::BUNDLE_TYP, "{}")?;
+        Some(quality::run_report_api::RunReportServices {
+            tokens: Arc::new(BundleTokens(p.clone())),
+            signer: Arc::new(ProviderBundles(p)),
+        })
+    });
     let run_sources = provider.clone().zip(catalog.clone()).map(|(p, catalog)| {
         quality::run_source_api::RunSourceServices {
             tokens: Arc::new(BundleTokens(p)),
@@ -113,6 +120,10 @@ pub(crate) fn serving(
     };
     let quality = match run_tokens {
         Some(services) => quality.with_run_tokens(pool.clone(), services),
+        None => quality,
+    };
+    let quality = match run_reports {
+        Some(services) => quality.with_run_reports(pool.clone(), services),
         None => quality,
     };
     let quality = match run_sources {
