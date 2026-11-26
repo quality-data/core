@@ -18,7 +18,7 @@ use crate::{Error, Statement};
 const MOST_QUEUES: usize = 1000;
 
 /// A cut's findings and their groups, as relations with the columns
-/// `(record, rule, since)` and `(record, dimension, grp)`.
+/// `(record, rule, priority, since)` and `(record, dimension, grp)`.
 #[derive(Debug, Clone, Copy)]
 pub struct Findings<'a> {
     pub findings: &'a str,
