@@ -5,7 +5,7 @@
 
 use quality::bundle::Bundle;
 use quality_rules_trino as trino;
-use quality_rules_trino::{Run, Sla, DETAILS, REMEDIATION_SLAS, RUN_SUMMARY};
+use quality_rules_trino::{Cut, Run, Sla, DETAILS, REMEDIATION_SLAS, RUN_SUMMARY};
 
 use crate::steps::Steps;
 use crate::{CompileError, Job};
@@ -38,13 +38,14 @@ pub fn retract(job: &Job<'_>, _input: &RetractInput) -> Result<Bundle, CompileEr
                 &format!("dataset_{t}"),
                 trino::dataset_rows(t, dataset)?,
                 trino::delete_dataset(t, dataset)?,
-            )?;
+            );
         }
         return Ok(job.bundle(steps));
     };
+    let cut = Cut::parse(cut).map_err(trino::Error::from)?;
     let run = Run {
         dataset,
-        cut,
+        cut: &cut,
         run_id: job.run,
         run_seq: job.run_seq()?,
     };
@@ -53,15 +54,15 @@ pub fn retract(job: &Job<'_>, _input: &RetractInput) -> Result<Bundle, CompileEr
             &format!("run_{t}"),
             trino::run_rows(t, &run)?,
             trino::delete_run(t, &run)?,
-        )?;
+        );
     }
-    steps.insert("tombstone".into(), trino::tombstone(&run, job.run)?)?;
+    steps.insert("tombstone".into(), trino::tombstone(&run, job.run)?);
     for t in tables().skip(1).chain([RUN_SUMMARY.name]) {
         steps.count_then_delete(
             &format!("older_{t}"),
             trino::older_rows(t, &run)?,
             trino::delete_older(t, &run)?,
-        )?;
+        );
     }
     Ok(job.bundle(steps))
 }
@@ -75,15 +76,15 @@ pub fn slas(job: &Job<'_>, input: &SlasInput) -> Result<Bundle, CompileError> {
         "run_slas",
         trino::run_slas(dataset, job.run)?,
         trino::delete_run_slas(dataset, job.run)?,
-    )?;
+    );
     if let Some(insert) = trino::insert_slas(dataset, job.run, &input.slas)? {
-        steps.insert("slas".into(), insert)?;
+        steps.insert("slas".into(), insert);
     }
     steps.count_then_delete(
         "older_slas",
         trino::older_slas(dataset, job.run)?,
         trino::delete_older_slas(dataset, job.run)?,
-    )?;
+    );
     Ok(job.bundle(steps))
 }
 
@@ -130,6 +131,25 @@ mod tests {
         }
         let older = &b.statements[2 * n + 2];
         assert!(older.sql.contains("run_id <> 'r-7'"), "{}", older.sql);
+        assert!(
+            older.sql.contains("cut = DATE '2026-10-31'"),
+            "{}",
+            older.sql
+        );
+    }
+
+    #[test]
+    fn a_cut_that_is_no_day_is_refused() {
+        for bad in ["2026-02-30", "2026-10-31' OR '1'='1"] {
+            let refused = retract(&job(Some(bad)), &RetractInput);
+            assert!(
+                matches!(
+                    refused,
+                    Err(CompileError::Statement(quality_rules_trino::Error::Sql(_)))
+                ),
+                "{bad}: {refused:?}"
+            );
+        }
     }
 
     #[test]

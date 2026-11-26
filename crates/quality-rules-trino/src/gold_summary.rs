@@ -30,7 +30,6 @@ const NOW_MS: &str = "CAST(to_unixtime(current_timestamp) * 1000 AS BIGINT)";
 pub fn started_ms() -> Statement {
     Statement {
         sql: format!("SELECT {NOW_MS} AS started_ms"),
-        cut_params: 0,
     }
 }
 
@@ -40,9 +39,9 @@ pub fn started_ms() -> Statement {
 /// 0057), and the entities with their bands.
 pub fn summary(run: &Run<'_>, s: &Summary<'_>) -> Result<Statement, Error> {
     let entities = format!(
-        "{GOLD}.\"entity_icd\" WHERE dataset = {} AND cut = DATE {} AND run_id = {}",
+        "{GOLD}.\"entity_icd\" WHERE dataset = {} AND cut = {} AND run_id = {}",
         quote_text(run.dataset)?,
-        quote_text(run.cut)?,
+        run.cut.literal(),
         quote_text(run.run_id)?
     );
     let duration = match s.started_ms {
@@ -64,7 +63,6 @@ pub fn summary(run: &Run<'_>, s: &Summary<'_>) -> Result<Statement, Error> {
             silver = s.silver,
             commit = quote_text(s.rules_commit)?,
         ),
-        cut_params: 0,
     })
 }
 
@@ -72,12 +70,14 @@ pub fn summary(run: &Run<'_>, s: &Summary<'_>) -> Result<Statement, Error> {
 mod tests {
     use super::*;
     use crate::gold_write::flip;
+    use quality_rules_sql::Cut;
 
     #[test]
     fn the_flip_takes_the_runs_entities_and_its_duration() {
+        let cut = Cut::parse("2026-10-31").unwrap();
         let run = Run {
             dataset: "loans",
-            cut: "2026-10-31",
+            cut: &cut,
             run_id: "r1",
             run_seq: 9,
         };

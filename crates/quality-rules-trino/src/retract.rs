@@ -11,7 +11,7 @@ use crate::gold_write::Run;
 use crate::{Error, Statement};
 
 fn plain(sql: String) -> Statement {
-    Statement { sql, cut_params: 0 }
+    Statement { sql }
 }
 
 /// The tombstone: the run's `run_summary` row with no detail rows; every
@@ -33,10 +33,10 @@ pub fn tombstone(run: &Run<'_>, job_id: &str) -> Result<Statement, Error> {
         })
         .collect::<Result<_, _>>()?;
     Ok(plain(format!(
-        "INSERT INTO {GOLD}.\"run_summary\" (dataset, cut, run_id, {}) VALUES ({}, DATE {}, {}, {})",
+        "INSERT INTO {GOLD}.\"run_summary\" (dataset, cut, run_id, {}) VALUES ({}, {}, {}, {})",
         cols.join(", "),
         quote_text(run.dataset)?,
-        quote_text(run.cut)?,
+        run.cut.literal(),
         quote_text(run.run_id)?,
         values.join(", ")
     )))
@@ -153,16 +153,16 @@ pub fn delete_older_slas(dataset: &str, run_id: &str) -> Result<Statement, Error
 mod tests {
     use super::*;
 
-    const RUN: Run<'static> = Run {
-        dataset: "loans",
-        cut: "2026-10-31",
-        run_id: "r-3",
-        run_seq: 9,
-    };
-
     #[test]
     fn a_retracted_cut_is_a_tombstone_then_its_older_rows_go() {
-        let t = tombstone(&RUN, "job-9").unwrap().sql;
+        let cut = quality_rules_sql::Cut::parse("2026-10-31").unwrap();
+        let run = Run {
+            dataset: "loans",
+            cut: &cut,
+            run_id: "r-3",
+            run_seq: 9,
+        };
+        let t = tombstone(&run, "job-9").unwrap().sql;
         assert!(t.starts_with(
             "INSERT INTO \"lake\".\"quality_gold\".\"run_summary\" (dataset, cut, run_id, \"run_seq\""
         ));

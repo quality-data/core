@@ -4,7 +4,7 @@
 //! spelling: `regexp_replace` replaces every match, `regexp_like` anchors
 //! by `^…$`.
 
-use quality_rules_sql::ShapeKind;
+use quality_rules_sql::{Cut, ShapeKind};
 
 use crate::{quoted, Error, Statement};
 
@@ -48,16 +48,20 @@ pub fn field_profile(from: &str, field: &str, kind: ShapeKind) -> Result<Stateme
                     (SELECT p FROM p),
                     COALESCE((SELECT n FROM p), 0)"
         ),
-        cut_params: 0,
     })
 }
 
-/// One row over `from`: the records by the age of `field` at the cut,
-/// dated after it, then up to each of [`RECENCY_DAYS`], then older.
-pub fn recency(from: &str, field: &str) -> Result<Statement, Error> {
+/// The number of recency bands: after the cut, each of
+/// [`RECENCY_DAYS`], then older.
+pub const RECENCY_BANDS: usize = RECENCY_DAYS.len() + 2;
+
+/// One row over `from`: the records by the age of `field` at `cut`, dated
+/// after it, then up to each of [`RECENCY_DAYS`], then older.
+pub fn recency(from: &str, field: &str, cut: &Cut) -> Result<Statement, Error> {
     let age = format!(
-        "date_diff('day', CAST({} AS DATE), CAST(? AS DATE))",
-        quoted(field)?
+        "date_diff('day', CAST({} AS DATE), {})",
+        quoted(field)?,
+        cut.literal()
     );
     let mut bands = vec![format!("count(*) FILTER (WHERE {age} < 0)")];
     let mut lo = 0;
@@ -68,8 +72,8 @@ pub fn recency(from: &str, field: &str) -> Result<Statement, Error> {
         lo = hi + 1;
     }
     bands.push(format!("count(*) FILTER (WHERE {age} >= {lo})"));
+    debug_assert_eq!(bands.len(), RECENCY_BANDS);
     Ok(Statement {
-        cut_params: bands.len(),
         sql: format!("SELECT {} FROM {from}", bands.join(", ")),
     })
 }
@@ -90,7 +94,6 @@ mod tests {
     #[test]
     fn the_profile_uses_trinos_spelling_and_portable_forms() {
         let s = field_profile("t", "Code", ShapeKind::Text).unwrap();
-        assert_eq!(s.cut_params, 0);
         assert!(s.sql.contains("regexp_like(v, '^[\\s\\x{00A0}]*$')"));
         assert!(s.sql.contains("regexp_replace(t, '[0-9]', '9')"));
         for word in ["regexp_full_match", "'g'", "left(", "::", "[[:"] {
@@ -127,9 +130,11 @@ mod tests {
     }
 
     #[test]
-    fn recency_binds_the_cut_once_per_band() {
-        let s = recency("t", "Updated").unwrap();
-        assert_eq!(s.cut_params, 7);
+    fn recency_writes_the_cut_once_per_band() {
+        let cut = Cut::parse("2026-10-31").unwrap();
+        let s = recency("t", "Updated", &cut).unwrap();
+        assert_eq!(s.sql.matches("DATE '2026-10-31'").count(), RECENCY_BANDS);
+        assert!(!s.sql.contains('?'));
         assert!(s.sql.contains("BETWEEN 31 AND 90"));
         assert!(s.sql.ends_with(">= 731) FROM t"));
         assert!(field_profile("t", "a\u{0}b", ShapeKind::Text).is_err());

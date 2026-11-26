@@ -33,7 +33,6 @@ pub fn percentile_guard(
              FROM {from}",
             quoted(variable)?
         ),
-        cut_params: 0,
     })
 }
 
@@ -48,7 +47,6 @@ pub fn percentile_row(from: &str, variable: &str, method: Method) -> Result<Stat
             quote_text(variable)?,
             line(&p.sql)
         ),
-        cut_params: 0,
     })
 }
 
@@ -63,7 +61,6 @@ pub fn outlier_rows(from: &str, mapping: &Mapping) -> Result<Statement, Error> {
                   CAST(NULL AS ARRAY(DOUBLE)), CAST(NULL AS BIGINT), CAST(NULL AS BIGINT), \
                   CAST(NULL AS BIGINT) WHERE false"
                 .into(),
-            cut_params: 0,
         });
     };
     let rows: Vec<String> = dims
@@ -80,7 +77,6 @@ pub fn outlier_rows(from: &str, mapping: &Mapping) -> Result<Statement, Error> {
         .collect::<Result<_, Error>>()?;
     Ok(Statement {
         sql: rows.join(" UNION ALL "),
-        cut_params: 0,
     })
 }
 

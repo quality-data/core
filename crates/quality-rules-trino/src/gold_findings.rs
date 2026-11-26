@@ -5,7 +5,7 @@
 //! `INSERT … SELECT`, never read back. The job reads its own dataset's
 //! rows only (its row filter).
 
-use quality_rules_sql::quote_text;
+use quality_rules_sql::{quote_text, Cut};
 
 use crate::findings::Findings;
 use crate::gold::GOLD;
@@ -29,11 +29,11 @@ impl GoldFindings {
     }
 }
 
-fn of(run: &str, dataset: &str, cut: &str) -> Result<GoldFindings, Error> {
+fn of(run: &str, dataset: &str, cut: &Cut) -> Result<GoldFindings, Error> {
     let at = format!(
-        "WHERE dataset = {} AND cut = DATE {} AND run_id = {run}",
+        "WHERE dataset = {} AND cut = {} AND run_id = {run}",
         quote_text(dataset)?,
-        quote_text(cut)?
+        cut.literal()
     );
     Ok(GoldFindings {
         findings: format!("(SELECT record, rule, priority, since FROM {GOLD}.\"findings\" {at})"),
@@ -50,12 +50,12 @@ pub fn run_findings(run: &Run<'_>) -> Result<GoldFindings, Error> {
 /// The findings of `dataset`'s `previous` cut (the core's index gives it
 /// at compile, decision 0090 A1) at that cut's current run: the one with
 /// the highest `run_seq` in `run_summary`.
-pub fn previous_findings(dataset: &str, previous: &str) -> Result<GoldFindings, Error> {
+pub fn previous_findings(dataset: &str, previous: &Cut) -> Result<GoldFindings, Error> {
     let current = format!(
         "(SELECT max_by(run_id, run_seq) FROM {GOLD}.\"run_summary\" \
-         WHERE dataset = {} AND cut = DATE {})",
+         WHERE dataset = {} AND cut = {})",
         quote_text(dataset)?,
-        quote_text(previous)?
+        previous.literal()
     );
     of(&current, dataset, previous)
 }
@@ -66,9 +66,10 @@ mod tests {
 
     #[test]
     fn the_runs_rows_and_the_previous_cuts_current_run() {
+        let cut = Cut::parse("2026-10-31").unwrap();
         let run = Run {
             dataset: "loans",
-            cut: "2026-10-31",
+            cut: &cut,
             run_id: "r2",
             run_seq: 7,
         };
@@ -83,11 +84,11 @@ mod tests {
         assert!(now
             .groups
             .contains("\"finding_groups\" WHERE dataset = 'loans'"));
-        let before = previous_findings("loans", "2026-09-30").unwrap();
+        let before = previous_findings("loans", &Cut::parse("2026-09-30").unwrap()).unwrap();
         assert!(before.findings.ends_with(&format!(
             "AND run_id = (SELECT max_by(run_id, run_seq) FROM {GOLD}.\"run_summary\" \
              WHERE dataset = 'loans' AND cut = DATE '2026-09-30'))"
         )));
-        assert!(previous_findings("lo'ans", "x\u{0}").is_err());
+        assert!(previous_findings("lo\u{0}ans", &cut).is_err());
     }
 }

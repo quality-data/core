@@ -3,7 +3,7 @@
 
 mod trino;
 
-use quality_rules_trino::{flip, install, started_ms, summary, Run, Summary, GOLD, SCRATCH};
+use quality_rules_trino::{flip, install, started_ms, summary, Cut, Run, Summary, GOLD, SCRATCH};
 use serde_json::json;
 use trino::{rows, url};
 
@@ -32,9 +32,10 @@ async fn the_flip_counts_the_runs_entities_and_bands() {
     )
     .await;
     let start = rows(&base, &started_ms().sql).await[0][0].to_string();
+    let cut = Cut::parse("2026-10-31").unwrap();
     let run = Run {
         dataset: "flip",
-        cut: "2026-10-31",
+        cut: &cut,
         run_id: "r1",
         run_seq: 4,
     };

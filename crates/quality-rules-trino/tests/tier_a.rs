@@ -43,7 +43,7 @@ async fn the_bracket_method_gives_the_windows_bits() {
 #[tokio::test]
 async fn the_rule_results_rows_give_each_rules_counts() {
     use quality_rules_compile::{compile, FieldType, Schema};
-    use quality_rules_sql::Tables;
+    use quality_rules_sql::{Cut, Tables};
     let Some(base) = url() else { return };
     let yaml = "dataset: loans\nrules:\n  \
                 - { id: R1, field: Code, check: required, severity: major, alert: a }\n";
@@ -52,12 +52,9 @@ async fn the_rule_results_rows_give_each_rules_counts() {
     let (compiled, problems) = compile(&quality_rules_model::parse(yaml).unwrap(), &schema);
     assert!(problems.is_empty(), "{problems:?}");
     let from = "(VALUES ('A1'), (''), (CAST(NULL AS VARCHAR)), ('B2')) t(\"Code\")";
-    let body = quality_rules_trino::rule_results(from, &compiled, &Tables::new()).unwrap();
-    let got = rows(
-        &base,
-        &trino::bound(&body.sql, "2026-10-31", body.cut_params),
-    )
-    .await;
+    let cut = Cut::parse("2026-10-31").unwrap();
+    let body = quality_rules_trino::rule_results(from, &compiled, &Tables::new(), &cut).unwrap();
+    let got = rows(&base, &body.sql).await;
     assert_eq!(
         got,
         vec![
@@ -75,7 +72,7 @@ async fn the_rule_results_rows_give_each_rules_counts() {
 #[tokio::test]
 async fn the_field_quality_rows_profile_bronze_and_date_silver() {
     use quality::mapping::Mapping;
-    use quality_rules_trino::{field_quality, FieldSources, ShapeKind};
+    use quality_rules_trino::{field_quality, Cut, FieldSources, ShapeKind};
     let Some(base) = url() else { return };
     let mapping = Mapping::parse(
         "dataset: loans\nsource: loans\nfields:\n  \
@@ -94,9 +91,10 @@ async fn the_field_quality_rows_profile_bronze_and_date_silver() {
         job_id: "j1",
     };
     let kind = |c: &str| ShapeKind::of_type(if c == "amount" { "double" } else { "varchar" });
-    let body = field_quality(&mapping, &from, &[], kind).unwrap();
+    let cut = Cut::parse("2026-10-31").unwrap();
+    let body = field_quality(&mapping, &from, &[], kind, &cut).unwrap();
     let sql = format!("SELECT * FROM ({}) x ORDER BY 1", body.sql);
-    let got = rows(&base, &trino::bound(&sql, "2026-10-31", body.cut_params)).await;
+    let got = rows(&base, &sql).await;
     let want = serde_json::json!([
         ["Amount", 1, 2, null, 0, true, null, null],
         ["Code", 1, 2, "A9", 1, false, null, null],

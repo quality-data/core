@@ -4,8 +4,6 @@
 use quality::bundle::{BundleStatement, Expect, OnlyIfRows, Placeholder, RunAs};
 use quality_rules_trino::Statement;
 
-use crate::CompileError;
-
 /// The column Trino names an unaliased `count(*)`.
 const COUNT: &str = "_col0";
 
@@ -13,15 +11,6 @@ const COUNT: &str = "_col0";
 pub(crate) struct Steps {
     pub(crate) placeholders: Vec<Placeholder>,
     pub(crate) statements: Vec<BundleStatement>,
-}
-
-/// A statement's SQL with nothing bound: the statements here take no cut.
-fn unbound(s: Statement) -> Result<String, CompileError> {
-    if s.cut_params == 0 {
-        Ok(s.sql)
-    } else {
-        Err(CompileError::Incomplete("cut_params"))
-    }
 }
 
 impl Steps {
@@ -43,25 +32,18 @@ impl Steps {
     }
 
     /// An `INSERT`.
-    pub(crate) fn insert(&mut self, id: String, s: Statement) -> Result<(), CompileError> {
-        self.push(id, unbound(s)?, Expect::insert(), None);
-        Ok(())
+    pub(crate) fn insert(&mut self, id: String, s: Statement) {
+        self.push(id, s.sql, Expect::insert(), None);
     }
 
     /// A count, then the `DELETE` it guards: `<id>_rows`, then `<id>`.
-    pub(crate) fn count_then_delete(
-        &mut self,
-        id: &str,
-        count: Statement,
-        delete: Statement,
-    ) -> Result<(), CompileError> {
+    pub(crate) fn count_then_delete(&mut self, id: &str, count: Statement, delete: Statement) {
         let rows = format!("{id}_rows");
         let expects = Expect::Rows {
             columns: vec![(COUNT.into(), "bigint".into())],
             max_rows: 1,
         };
-        self.push(rows.clone(), unbound(count)?, expects, None);
-        self.push(id.into(), unbound(delete)?, Expect::delete(), Some(rows));
-        Ok(())
+        self.push(rows.clone(), count.sql, expects, None);
+        self.push(id.into(), delete.sql, Expect::delete(), Some(rows));
     }
 }

@@ -9,7 +9,7 @@ mod trino;
 
 use quality::mapping::Mapping;
 use quality_rules_compile::{compile, FieldType, Schema};
-use quality_rules_sql::Tables;
+use quality_rules_sql::{Cut, Tables};
 use quality_rules_trino::{cell_rows, entity_icd, group_metrics, measured, IcdRule, SCRATCH};
 use serde_json::{json, Value};
 use trino::{rows, url};
@@ -92,7 +92,7 @@ async fn the_scratch_rows_give_groups_cells_and_entities() {
     assert!(problems.is_empty(), "{problems:?}");
     let rules: Vec<IcdRule> = compiled
         .iter()
-        .map(|r| IcdRule::of(r, &Tables::new()).unwrap())
+        .map(|r| IcdRule::of(r, &Tables::new(), &Cut::parse("2026-10-31").unwrap()).unwrap())
         .collect();
     let e = entity_icd(JOB, &measured(&mapping, &rules)).unwrap();
     let sql = format!(

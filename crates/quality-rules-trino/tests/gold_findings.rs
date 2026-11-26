@@ -5,7 +5,7 @@
 mod trino;
 
 use quality::mapping::Mapping;
-use quality_rules_trino::{install, previous_findings, queues, run_findings, Run, GOLD};
+use quality_rules_trino::{install, previous_findings, queues, run_findings, Cut, Run, GOLD};
 use serde_json::{json, Value};
 use trino::{rows, url};
 
@@ -54,14 +54,15 @@ async fn the_queues_read_this_run_and_the_previous_cuts_current_run() {
          Type: { column: kind, type: text, roles: [dimension] }\n",
     )
     .unwrap();
+    let cut = Cut::parse("2026-10-31").unwrap();
     let run = Run {
         dataset: "loans",
-        cut: "2026-10-31",
+        cut: &cut,
         run_id: "r2",
         run_seq: 3,
     };
     let now = run_findings(&run).unwrap();
-    let before = previous_findings("loans", "2026-09-30").unwrap();
+    let before = previous_findings("loans", &Cut::parse("2026-09-30").unwrap()).unwrap();
     let q = queues(&mapping, now.relations(), Some(before.relations())).unwrap();
     let got = Value::from(rows(&base, &q.sql.replace('\n', " ")).await);
     assert_eq!(

@@ -5,10 +5,10 @@
 //! recency on the mapping's updated field only.
 
 use quality::mapping::{FieldRole, Mapping};
-use quality_rules_sql::{quote_text, ShapeKind};
+use quality_rules_sql::{quote_text, Cut, ShapeKind};
 
 use crate::icd::{role, Measured, SCRATCH};
-use crate::profile::{field_profile, recency};
+use crate::profile::{field_profile, recency, RECENCY_BANDS};
 use crate::{Error, Statement};
 
 /// The relations a field's row reads, each already pinned by the caller.
@@ -33,6 +33,7 @@ pub fn field_quality(
     from: &FieldSources<'_>,
     measured: &[Measured],
     kind: impl Fn(&str) -> ShapeKind,
+    cut: &Cut,
 ) -> Result<Statement, Error> {
     let updated = role(mapping, FieldRole::Updated);
     let means = if measured.is_empty() {
@@ -48,7 +49,6 @@ pub fn field_quality(
         )
     };
     let mut rows = Vec::new();
-    let mut cut_params = 0;
     for (name, f) in &mapping.fields {
         let k = kind(&f.value.column);
         let profile = field_profile(from.bronze, &f.value.column, k)?;
@@ -57,15 +57,14 @@ pub fn field_quality(
             None => "CAST(NULL AS DOUBLE)".into(),
         };
         let (bands, join) = if updated == Some(name) {
-            let r = recency(from.silver, name)?;
-            cut_params += r.cut_params;
-            let names: Vec<String> = (0..r.cut_params).map(|i| format!("r.b{i}")).collect();
+            let r = recency(from.silver, name, cut)?;
+            let names: Vec<String> = (0..RECENCY_BANDS).map(|i| format!("r.b{i}")).collect();
             (
                 format!("ARRAY[{}]", names.join(", ")),
                 format!(
                     "CROSS JOIN ({}) AS r ({}) ",
                     r.sql,
-                    (0..r.cut_params)
+                    (0..RECENCY_BANDS)
                         .map(|i| format!("b{i}"))
                         .collect::<Vec<_>>()
                         .join(", ")
@@ -88,12 +87,10 @@ pub fn field_quality(
                   CAST(NULL AS VARCHAR), CAST(NULL AS BIGINT), CAST(NULL AS BOOLEAN), \
                   CAST(NULL AS DOUBLE), CAST(NULL AS ARRAY(BIGINT)) WHERE false"
                 .into(),
-            cut_params: 0,
         });
     }
     Ok(Statement {
         sql: rows.join(" UNION ALL "),
-        cut_params,
     })
 }
 
@@ -120,6 +117,10 @@ fields:
         }
     }
 
+    fn cut() -> Cut {
+        Cut::parse("2026-10-31").unwrap()
+    }
+
     fn kind(column: &str) -> ShapeKind {
         ShapeKind::of_type(if column == "amount" {
             "double"
@@ -131,9 +132,9 @@ fields:
     #[test]
     fn one_row_per_field_with_recency_on_the_updated_field_only() {
         let mapping = Mapping::parse(MAPPING).unwrap();
-        let s = field_quality(&mapping, &sources(), &[], kind).unwrap();
+        let s = field_quality(&mapping, &sources(), &[], kind, &cut()).unwrap();
         assert_eq!(s.sql.matches("UNION ALL").count(), 2);
-        assert_eq!(s.cut_params, 7);
+        assert_eq!(s.sql.matches("DATE '2026-10-31'").count(), RECENCY_BANDS);
         assert_eq!(
             s.sql.matches("CROSS JOIN (SELECT count(*) FILTER").count(),
             1
@@ -148,7 +149,8 @@ fields:
         assert!(s
             .sql
             .contains("ARRAY[r.b0, r.b1, r.b2, r.b3, r.b4, r.b5, r.b6]"));
-        assert!(s.sql.contains("\"Updated\" AS DATE), CAST(? AS DATE))"));
+        assert!(s.sql.contains("\"Updated\" AS DATE), DATE '2026-10-31')"));
+        assert!(!s.sql.contains('?'));
         assert!(!s.sql.contains(SCRATCH));
     }
 
@@ -162,10 +164,10 @@ fields:
         let (compiled, _) = compile(&quality_rules_model::parse(yaml).unwrap(), &schema);
         let rules: Vec<IcdRule> = compiled
             .iter()
-            .map(|r| IcdRule::of(r, &Tables::new()).unwrap())
+            .map(|r| IcdRule::of(r, &Tables::new(), &cut()).unwrap())
             .collect();
         let fields = measured(&mapping, &rules);
-        let s = field_quality(&mapping, &sources(), &fields, kind).unwrap();
+        let s = field_quality(&mapping, &sources(), &fields, kind, &cut()).unwrap();
         assert!(s.sql.contains(&format!(
             "CROSS JOIN (SELECT avg(element_at(f, 1)) AS m1 FROM {SCRATCH} WHERE job_id = 'j1') m"
         )));

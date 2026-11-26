@@ -3,7 +3,8 @@
 //! tree DuckDB's SQL comes from (`quality-rules-sql`, `Engine::Trino`).
 //! Pure: it takes a mapping, compiled rules and table paths and returns
 //! SQL text, never a connection. Every read is pinned to a snapshot
-//! (`FOR VERSION AS OF`); the cut is a bound parameter (`?`), in order.
+//! (`FOR VERSION AS OF`); the cut is a checked `DATE` literal ([`Cut`],
+//! ruling 52), so every statement is complete with nothing bound.
 
 mod cells;
 mod distribution;
@@ -41,8 +42,10 @@ pub use loads::{
     accepted, create_silver, delete_load, derive_silver, loads_of_cut, migrate_to_loads, Accepted,
     LOAD,
 };
-pub use profile::{bronze_profile, field_profile, recency, shape_of, RECENCY_DAYS, SHAPE_LEN};
-pub use quality_rules_sql::ShapeKind;
+pub use profile::{
+    bronze_profile, field_profile, recency, shape_of, RECENCY_BANDS, RECENCY_DAYS, SHAPE_LEN,
+};
+pub use quality_rules_sql::{Cut, ShapeKind};
 pub use read::{current_snapshot, pinned, typed_select, Pinned, TablePath};
 pub use retract::{
     dataset_rows, delete_dataset, delete_older_slas, delete_run_slas, insert_slas, older_slas,
@@ -53,11 +56,10 @@ pub use scratch::{cells, entities, groups, means, scratch_delete, scratch_rows};
 
 use quality_rules_sql::quote_ident;
 
-/// One statement and how many times the cut is bound to it, in order.
+/// One statement, complete: nothing is bound to it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Statement {
     pub sql: String,
-    pub cut_params: usize,
 }
 
 /// What cannot be written safely, or a rule that does not compile to SQL.

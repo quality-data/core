@@ -8,7 +8,7 @@
 //! rows, so the bundle needs no result of an earlier statement.
 
 use quality::mapping::{FieldRole, Mapping};
-use quality_rules_sql::{double, quote_text};
+use quality_rules_sql::{double, quote_text, Cut};
 
 use crate::cells::Cells;
 use crate::icd::{measured, with_role, IcdRule, SCRATCH};
@@ -41,12 +41,14 @@ fn job(job_id: &str) -> Result<String, Error> {
 /// Each failing `(record, rule, priority, since)`: the priority the
 /// greatest term of the measured fields the rule reads (0 with none), each
 /// term its weight over 4, what its ICD lacks and its cell's closeness
-/// (0.2, the lowest, with no cell or no active record).
+/// (0.2, the lowest, with no cell or no active record). A finding new at
+/// this cut is open `since` it.
 pub fn findings(
     job_id: &str,
     mapping: &Mapping,
     rules: &[IcdRule],
     previous: Option<Findings<'_>>,
+    cut: &Cut,
 ) -> Result<Statement, Error> {
     let fields = measured(mapping, rules);
     let cells = Cells::of(mapping, rules)?;
@@ -98,15 +100,16 @@ pub fn findings(
         cases.push("WHEN 0 THEN DOUBLE '0'".into());
         ids.push("''".into());
     }
+    let cut = cut.literal();
     let (join, since) = match previous {
         Some(p) => (
             format!(
                 "LEFT JOIN {} q ON q.record = f.record AND q.rule = f.rule",
                 p.findings
             ),
-            "COALESCE(q.since, CAST(? AS DATE))",
+            format!("COALESCE(q.since, {cut})"),
         ),
-        None => (String::new(), "CAST(? AS DATE)"),
+        None => (String::new(), cut),
     };
     let rows = job(job_id)?;
     Ok(Statement {
@@ -125,7 +128,6 @@ pub fn findings(
             ids = ids.join(", "),
             cases = cases.join(" "),
         ),
-        cut_params: 1,
     })
 }
 
@@ -148,7 +150,6 @@ pub fn finding_groups(job_id: &str, mapping: &Mapping, current: &str) -> Result<
     }
     Ok(Statement {
         sql: each.join(" UNION ALL "),
-        cut_params: 0,
     })
 }
 
@@ -203,6 +204,5 @@ pub fn queues(
             cf = current.findings,
             cg = current.groups,
         ),
-        cut_params: 0,
     })
 }

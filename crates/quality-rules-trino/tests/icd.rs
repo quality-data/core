@@ -3,7 +3,7 @@
 
 use quality::mapping::Mapping;
 use quality_rules_compile::{compile, FieldType, Schema};
-use quality_rules_sql::Tables;
+use quality_rules_sql::{Cut, Tables};
 use quality_rules_trino::{
     cells, entities, groups, means, measured, scratch_delete, scratch_insert, scratch_rows,
     IcdRule, FINDINGS_KEY, SCRATCH,
@@ -33,6 +33,10 @@ rules:
 
 const JOB: &str = "0b9c6a1e-0000-4000-8000-000000000001";
 
+fn cut() -> Cut {
+    Cut::parse("2026-10-31").unwrap()
+}
+
 fn setup() -> (Mapping, Vec<IcdRule>) {
     let mapping = Mapping::parse(MAPPING).unwrap();
     let mut schema = Schema::default();
@@ -50,7 +54,7 @@ fn setup() -> (Mapping, Vec<IcdRule>) {
     assert!(problems.is_empty(), "{problems:?}");
     let rules = compiled
         .iter()
-        .map(|c| IcdRule::of(c, &Tables::new()).unwrap())
+        .map(|c| IcdRule::of(c, &Tables::new(), &cut()).unwrap())
         .collect();
     (mapping, rules)
 }
@@ -58,7 +62,7 @@ fn setup() -> (Mapping, Vec<IcdRule>) {
 #[test]
 fn the_scratch_insert_evaluates_once_and_hashes_in_the_engine() {
     let (mapping, rules) = setup();
-    let s = scratch_insert(JOB, "loans", "silver", &mapping, &rules).unwrap();
+    let s = scratch_insert(JOB, "loans", "silver", &mapping, &rules, &cut()).unwrap();
     assert!(s.sql.starts_with(&format!(
         "INSERT INTO {SCRATCH} (job_id, dataset, k, r_key, s, a, serious, act, icd, r, f, g, c)"
     )));
@@ -80,13 +84,12 @@ fn the_scratch_insert_evaluates_once_and_hashes_in_the_engine() {
     for word in ["::", "GROUP BY ALL", "'g'", "mode(", "greatest(NULL"] {
         assert!(!s.sql.contains(word), "{word}");
     }
-    let rule_cuts: usize = rules.iter().map(|r| r.sql.cut_params).sum();
-    assert_eq!(
-        s.cut_params,
-        rule_cuts + 1,
-        "the rules' and the A component's"
+    assert!(
+        s.sql
+            .contains("date_diff('day', \"Updated\", DATE '2026-10-31')"),
+        "the A component's cut"
     );
-    assert_eq!(s.sql.matches('?').count(), s.cut_params);
+    assert!(!s.sql.contains('?'), "nothing to bind");
 }
 
 #[test]

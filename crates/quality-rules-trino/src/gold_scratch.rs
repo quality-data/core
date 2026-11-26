@@ -22,7 +22,6 @@ fn none(columns: &[&str]) -> Statement {
         .collect();
     Statement {
         sql: format!("SELECT {} WHERE false", cols.join(", ")),
-        cut_params: 0,
     }
 }
 
@@ -49,7 +48,6 @@ pub fn group_metrics(job_id: &str, mapping: &Mapping) -> Result<Statement, Error
         .collect::<Result<_, Error>>()?;
     Ok(Statement {
         sql: rows.join(" UNION ALL "),
-        cut_params: 0,
     })
 }
 
@@ -84,7 +82,6 @@ pub fn cell_rows(job_id: &str, mapping: &Mapping) -> Result<Statement, Error> {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
-        cut_params: 0,
     })
 }
 
@@ -102,7 +99,6 @@ pub fn entity_icd(job_id: &str, fields: &[Measured]) -> Result<Statement, Error>
             double(0.75),
             line(&e.sql)
         ),
-        cut_params: 0,
     })
 }
 
