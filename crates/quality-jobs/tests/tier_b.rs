@@ -200,6 +200,7 @@ async fn evaluate_run(
         bronze_types: types,
         rules_commit: "c0ffee",
         exact_sort_limit: 1_000_000,
+        at: Default::default(),
     };
     let b = evaluate(&job(run, "evaluate", Some(CUT), Some(seq)), &input).unwrap();
     run_bundle(base, &b, "job_rules_loans", "job_report_loans")

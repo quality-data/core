@@ -272,6 +272,7 @@ impl TrinoJobs {
             bronze_types: &BTreeMap::new(),
             rules_commit: &facts.commit,
             exact_sort_limit: exact_sort_limit(),
+            at: Default::default(),
         };
         quality_jobs::evaluate(&j, &input).map_err(refused)
     }

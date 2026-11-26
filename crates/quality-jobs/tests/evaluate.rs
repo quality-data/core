@@ -84,6 +84,7 @@ fn bundle(previous: Option<&str>) -> Result<Bundle, CompileError> {
         bronze_types: &types,
         rules_commit: "abc123",
         exact_sort_limit: 100_000,
+        at: Default::default(),
     };
     evaluate(&job(Some("2026-10-31")), &input)
 }
@@ -213,6 +214,7 @@ fn a_missing_or_bad_cut_is_refused() {
         bronze_types: &types,
         rules_commit: "abc",
         exact_sort_limit: 10,
+        at: Default::default(),
     };
     assert_eq!(
         evaluate(&job(None), &input),
@@ -262,6 +264,7 @@ fn a_reference_is_read_pinned_at_the_cut() {
         bronze_types: &types,
         rules_commit: "abc",
         exact_sort_limit: 10,
+        at: Default::default(),
     };
     let b = evaluate(&job(Some("2026-10-31")), &input).unwrap();
     assert!(b.well_formed());
@@ -281,4 +284,39 @@ fn a_reference_is_read_pinned_at_the_cut() {
         evaluate(&job(Some("2026-10-31")), &input),
         Err(CompileError::Incomplete("reference"))
     );
+}
+
+/// Step 22's backfill: an evaluation pinned to a cut's recorded silver
+/// snapshot reads it as it was, with no `$refs` read for it.
+#[test]
+fn a_backfill_reads_the_recorded_silver_snapshot() {
+    use quality_jobs::AtSnapshots;
+    let mapping = Mapping::parse(MAPPING).unwrap();
+    let rules = rules();
+    let types = BTreeMap::new();
+    let input = EvaluateInput {
+        mapping: &mapping,
+        rules: &rules,
+        tables: &Tables::new(),
+        references: &[],
+        silver: path("loans_silver"),
+        bronze: path("loans_bronze"),
+        load: None,
+        previous: None,
+        bronze_types: &types,
+        rules_commit: "abc",
+        exact_sort_limit: 10,
+        at: AtSnapshots {
+            silver: Some(4242),
+            bronze: None,
+        },
+    };
+    let b = evaluate(&job(Some("2026-10-31")), &input).unwrap();
+    assert!(b.well_formed());
+    assert!(!b.statements.iter().any(|s| s.id == "silver_snapshot"));
+    assert!(b.statements.iter().any(|s| s.id == "bronze_snapshot"));
+    let scratch = b.statements.iter().find(|s| s.id == "scratch").unwrap();
+    assert!(scratch
+        .sql
+        .contains("\"lake\".\"loans_silver\".\"loans\" FOR VERSION AS OF 4242 WHERE cut = DATE '2026-10-31' AND _load IS NULL"));
 }
