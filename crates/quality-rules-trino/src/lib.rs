@@ -40,7 +40,8 @@ pub use gold_summary::{started_ms, summary, Summary};
 pub use gold_write::{delete_older, delete_run, flip, insert, older_rows, run_rows, Run};
 pub use icd::{measured, scratch_insert, IcdRule, Measured, FINDINGS_KEY, SCRATCH};
 pub use job_counts::{
-    count_into, count_read, delete_run_counts, run_counts, COUNT_COLUMN, JOB_COUNTS,
+    count_into, count_read, delete_run_counts, rule_test_counts, run_count_rows, run_counts,
+    COUNT_COLUMN, JOB_COUNTS,
 };
 pub use loads::{
     accepted, accepted_in, create_silver, delete_load, derive_silver, loads_of_cut,

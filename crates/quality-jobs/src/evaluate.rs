@@ -86,8 +86,8 @@ pub fn evaluate(job: &Job<'_>, input: &EvaluateInput<'_>) -> Result<Bundle, Comp
         &started,
         trino::COUNT_COLUMN,
     );
-    let silver = pin(&mut steps, &input.silver, SILVER_PIN, &run, input.load)?;
-    let bronze = pin(&mut steps, &input.bronze, BRONZE_PIN, &run, input.load)?;
+    let silver = pin(&mut steps, &input.silver, SILVER_PIN, &cut, input.load)?;
+    let bronze = pin(&mut steps, &input.bronze, BRONZE_PIN, &cut, input.load)?;
     let icd: Vec<IcdRule> = input
         .rules
         .iter()
@@ -195,11 +195,11 @@ fn undo_attempt(steps: &mut Steps, run: &Run<'_>) -> Result<(), CompileError> {
 
 /// `table`'s snapshot read as the report user (its `$refs`, ruling 39)
 /// into the placeholder `name`; the cut's accepted load at it.
-fn pin(
+pub(crate) fn pin(
     steps: &mut Steps,
     table: &TablePath,
     name: &str,
-    run: &Run<'_>,
+    cut: &Cut,
     load: Option<&str>,
 ) -> Result<String, CompileError> {
     let read = trino::Statement {
@@ -208,7 +208,7 @@ fn pin(
     steps.read_one(name.into(), read, SNAPSHOT_COLUMN);
     steps.placeholder(name, PlaceholderType::SnapshotId, name, SNAPSHOT_COLUMN);
     let at = trino::pinned_by(table, name)?;
-    Ok(trino::accepted_in(&at, &Accepted { cut: run.cut, load })?)
+    Ok(trino::accepted_in(&at, &Accepted { cut, load })?)
 }
 
 /// The run's findings over the scratch rows, their groups, then the

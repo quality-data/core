@@ -61,6 +61,11 @@ impl Steps {
         self.push(id, s.sql, Expect::delete(), Some(after));
     }
 
+    /// A read as the report user, its answer as `expects` says.
+    pub(crate) fn read(&mut self, id: String, s: Statement, expects: Expect) {
+        self.push(id, s.sql, expects, None);
+    }
+
     /// A read of one row of one `bigint` named `column`, as the report user.
     pub(crate) fn read_one(&mut self, id: String, s: Statement, column: &str) {
         let expects = Expect::Rows {
