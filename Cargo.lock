@@ -3019,7 +3019,11 @@ dependencies = [
  "quality-rules-model",
  "quality-rules-sql",
  "quality-rules-tree",
+ "quality-rules-trino",
+ "reqwest",
+ "serde_json",
  "sha2 0.10.9",
+ "tokio",
 ]
 
 [[package]]
@@ -3065,6 +3069,9 @@ dependencies = [
  "quality-rules-compile",
  "quality-rules-model",
  "quality-rules-tree",
+ "reqwest",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -3073,6 +3080,20 @@ version = "0.1.0"
 dependencies = [
  "quality-rules-model",
  "sqlparser",
+]
+
+[[package]]
+name = "quality-rules-trino"
+version = "0.1.0"
+dependencies = [
+ "quality",
+ "quality-rules-compile",
+ "quality-rules-model",
+ "quality-rules-sql",
+ "quality-rules-tree",
+ "reqwest",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

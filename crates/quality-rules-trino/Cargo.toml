@@ -1,0 +1,29 @@
+[package]
+name = "quality-rules-trino"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+# The statements a job runner submits to Trino (decision 0090, step 10):
+# SQL text only, compiled by the core and signed later. Pure: no I/O, no
+# Trino client.
+[dependencies]
+quality.workspace = true
+quality-rules-compile.workspace = true
+quality-rules-model.workspace = true
+quality-rules-sql.workspace = true
+quality-rules-tree.workspace = true
+
+
+[dev-dependencies]
+# The contract tier A's own Trino client (tests/trino), when QD_TRINO_URL is set.
+reqwest.workspace = true
+serde_json.workspace = true
+tokio.workspace = true

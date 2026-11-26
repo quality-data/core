@@ -160,7 +160,9 @@ impl Module for QualityModule {
             migration!("0026_jobs_uses_trino"),
             migration!("0027_claim_in_maintenance"),
             migration!("0028_claim_without_trino_hold"),
+            migration!("0029_gold_run_seq"),
             migration!("0030_job_bundles"),
+            migration!("0031_field_quality_floating"),
         ]
     }
 

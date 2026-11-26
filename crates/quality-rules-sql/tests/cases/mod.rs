@@ -1,6 +1,7 @@
 //! The semantics of decision 0033 as cases: synthetic rows, rules in YAML,
 //! and the result each rule must give on each row (`None` does not apply).
-//! The DuckDB test runs them.
+//! The DuckDB test runs them, and the contract tier A runs them on Trino
+//! (decision 0090). Shared by both.
 
 #![allow(dead_code)]
 
