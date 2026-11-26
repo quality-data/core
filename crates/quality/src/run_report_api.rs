@@ -22,7 +22,6 @@ use crate::worker_api::MachineTokens;
 
 /// The statements whose rows feed the index (quality-jobs' evaluate).
 const INDEX_SUMMARY: &str = "index_run_summary";
-const INDEX_RULES: &str = "index_rule_results";
 /// The statement whose rows are a `tables` run's listing.
 const LISTING: &str = "listing";
 
@@ -120,6 +119,20 @@ fn internal(e: impl std::fmt::Display) -> Refusal {
     refused(StatusCode::INTERNAL_SERVER_ERROR, "internal")
 }
 
+/// Whether `v` is a value of the Trino type `ty` (or null).
+fn takes(ty: &str, v: &Value) -> bool {
+    use crate::index_rows::ColumnType as T;
+    let t = match ty {
+        "bigint" => T::Bigint,
+        "double" => T::Double,
+        "boolean" => T::Boolean,
+        "date" => T::Date,
+        "array(bigint)" => T::BigintArray,
+        _ => T::Varchar,
+    };
+    t.takes(v)
+}
+
 /// Whether `rows` fit what the bundle declared of `id`.
 fn rows_fit(b: &Bundle, id: &str, rows: &[Vec<Value>]) -> bool {
     let Some(s) = b.statements.iter().find(|s| s.id == id) else {
@@ -130,10 +143,7 @@ fn rows_fit(b: &Bundle, id: &str, rows: &[Vec<Value>]) -> bool {
             u64::try_from(rows.len()).is_ok_and(|n| n <= *max_rows)
                 && rows.iter().all(|r| {
                     r.len() == columns.len()
-                        && r.iter().zip(columns).all(|(v, (_, ty))| match ty.as_str() {
-                            "bigint" => v.is_i64() || v.is_null(),
-                            _ => v.is_string() || v.is_null(),
-                        })
+                        && r.iter().zip(columns).all(|(v, (_, ty))| takes(ty, v))
                 })
         }
         _ => false,
@@ -282,23 +292,11 @@ async fn index(
     .execute(&mut **tx)
     .await
     .map_err(internal)?;
-    for rule in rows_of(r, INDEX_RULES).into_iter().flatten() {
-        let (Some(name), applies, failures) = (rule[0].as_str(), int(&rule[1]), int(&rule[2]))
-        else {
-            continue;
-        };
-        sqlx::query(
-            "INSERT INTO quality.rule_results (dataset, cut, rule, applies, failures)
-             VALUES ($1, $2, $3, $4, $5)",
-        )
-        .bind(dataset)
-        .bind(cut)
-        .bind(name)
-        .bind(applies)
-        .bind(failures.min(applies))
-        .execute(&mut **tx)
-        .await
-        .map_err(internal)?;
+    for table in crate::index_rows::INDEX_TABLES {
+        let rows = rows_of(r, &table.statement()).map_or(&[][..], Vec::as_slice);
+        crate::index_rows::write(tx, table, dataset, cut, rows)
+            .await
+            .map_err(internal)?;
     }
     sqlx::query("UPDATE quality.cuts SET state = 'done' WHERE dataset = $1 AND cut = $2")
         .bind(dataset)

@@ -322,3 +322,72 @@ async fn a_tables_runs_listing_is_kept_as_its_sources() {
         ])
     );
 }
+
+/// Ruling 76: every index table the report reads back is written, each
+/// type as the index keeps it.
+#[tokio::test]
+async fn the_other_index_tables_come_from_their_read_back_rows() {
+    use quality::index_rows::INDEX_TABLES;
+    let (_db, app, router, mut b) = fixture().await;
+    for sql in [
+        "ALTER TABLE quality.field_quality OWNER TO app",
+        "ALTER TABLE quality.group_metrics OWNER TO app",
+        "ALTER TABLE quality.cells OWNER TO app",
+        "ALTER TABLE quality.queue_findings OWNER TO app",
+    ] {
+        sqlx::query(sql).execute(&_db.pool).await.unwrap();
+    }
+    let run = "0b9c6a1e-0000-4000-8000-000000000033";
+    b.job_id = run.into();
+    b.statements.truncate(2);
+    for t in INDEX_TABLES {
+        let cols: Vec<(&str, &str)> = t.columns.iter().map(|(n, ty)| (*n, ty.trino())).collect();
+        b.statements.push(read(&t.statement(), &cols, t.max_rows));
+    }
+    sqlx::query(
+        "INSERT INTO quality.job_bundles (run, kind, dataset, cut, digest, bundle, asked_by)
+         VALUES ($1, 'evaluate', 'loans', DATE '2026-10-31', $2, $3, 'runner')",
+    )
+    .bind(run)
+    .bind(b.digest())
+    .bind(bundle::sign(&Plain, &b))
+    .execute(&app)
+    .await
+    .unwrap();
+    let report = json!({
+        "digest": b.digest(),
+        "state": "done",
+        "statements": [
+            { "id": "index_run_summary", "state": "done", "rows": [[6, 120]] },
+            { "id": "index_rule_results", "state": "done", "rows": [["P1", 6, 2]] },
+            { "id": "index_field_quality", "state": "done", "rows": [
+                ["Phone", 2, 4, "9999999999", 4, false, 0.75, [1, 2, 0, 0, 0, 0, 1]]] },
+            { "id": "index_group_metrics", "state": "done", "rows": [["Type", "PN", 4, 1, 0.8]] },
+            { "id": "index_cells", "state": "done", "rows": [["Phone", 3, 4, false, 1, 0]] },
+            { "id": "index_queue_findings", "state": "done", "rows": [["Type", "PN", "2026-10-31", 2, 0, 1.5]] }
+        ]
+    });
+    let req = Request::post(format!("/internal/quality/v1/runs/{run}/report"))
+        .header("content-type", "application/json")
+        .header("authorization", "Bearer token-runner")
+        .body(Body::from(report.to_string()))
+        .unwrap();
+    let res = router.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    let fq: (String, Option<Vec<i64>>, Option<bool>) =
+        sqlx::query_as("SELECT field, recency, floating FROM quality.field_quality")
+            .fetch_one(&app)
+            .await
+            .unwrap();
+    assert_eq!(
+        fq,
+        ("Phone".into(), Some(vec![1, 2, 0, 0, 0, 0, 1]), Some(false))
+    );
+    for (table, n) in [("group_metrics", 1), ("cells", 1), ("queue_findings", 1)] {
+        let got: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM quality.{table}"))
+            .fetch_one(&app)
+            .await
+            .unwrap();
+        assert_eq!(got, n, "{table}");
+    }
+}

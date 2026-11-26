@@ -172,17 +172,17 @@ pub fn evaluate(job: &Job<'_>, input: &EvaluateInput<'_>) -> Result<Bundle, Comp
             trino::delete_older(t, &run)?,
         );
     }
-    index_reads(&mut steps, &run, input.rules.len())?;
+    index_reads(&mut steps, &run)?;
     Ok(job.bundle(steps))
 }
 
 /// The statements whose rows the report hands back to the core's index
-/// (ruling 76): the run's summary and its rules' counts, as the report
-/// user.
+/// (ruling 76): the run's summary, then each of `quality::index_rows`'
+/// tables, as the report user.
 pub const INDEX_SUMMARY: &str = "index_run_summary";
 pub const INDEX_RULES: &str = "index_rule_results";
 
-fn index_reads(steps: &mut Steps, run: &Run<'_>, rules: usize) -> Result<(), CompileError> {
+fn index_reads(steps: &mut Steps, run: &Run<'_>) -> Result<(), CompileError> {
     let bigint = |n: &str| (n.to_string(), "bigint".to_string());
     steps.read(
         INDEX_SUMMARY.into(),
@@ -192,18 +192,21 @@ fn index_reads(steps: &mut Steps, run: &Run<'_>, rules: usize) -> Result<(), Com
             max_rows: 1,
         },
     );
-    steps.read(
-        INDEX_RULES.into(),
-        trino::run_read("rule_results", run, &["rule", "applies", "failures"])?,
-        Expect::Rows {
-            columns: vec![
-                ("rule".into(), "varchar".into()),
-                bigint("applies"),
-                bigint("failures"),
-            ],
-            max_rows: u64::try_from(rules.max(1)).unwrap_or(u64::MAX),
-        },
-    );
+    for t in quality::index_rows::INDEX_TABLES {
+        let names: Vec<&str> = t.columns.iter().map(|(n, _)| *n).collect();
+        steps.read(
+            t.statement(),
+            trino::run_read(t.name, run, &names)?,
+            Expect::Rows {
+                columns: t
+                    .columns
+                    .iter()
+                    .map(|(n, ty)| ((*n).to_string(), ty.trino().to_string()))
+                    .collect(),
+                max_rows: t.max_rows,
+            },
+        );
+    }
     Ok(())
 }
 

@@ -24,6 +24,7 @@ pub mod engine_compare;
 pub mod entity_key;
 pub mod field_api;
 pub mod firing;
+pub mod index_rows;
 pub mod job_grants;
 pub mod job_grants_api;
 pub mod job_inputs;
