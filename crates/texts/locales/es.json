@@ -447,11 +447,11 @@
     },
     "cli": {
       "blocked": "Hay errores: corrígelos antes de guardar las reglas.",
-      "noData": "Falta el dataset {{dataset}}: cárgalo con --data {{dataset}}=archivo.parquet",
-      "examplesNeedCut": "Los ejemplos comparan fechas con el corte: agrega --cut AAAA-MM-DD para probarlos.",
+      "noMapping": "El dataset {{dataset}} no tiene mapeo: dalo con --mapping ARCHIVO",
+      "examplesOnTrino": "Los ejemplos de las reglas no se ejecutan aquí: una prueba de reglas los ejecuta en Trino.",
       "error": "error",
       "warning": "aviso",
-      "usage": "Uso: server quality rules lint|explain ARCHIVO... --data DATASET=PARQUET... [--mapping ARCHIVO]... [--cut AAAA-MM-DD] [--type CAMPO=email] [--lang es|en] · server quality rules tidy ARCHIVO... [--check]",
+      "usage": "Uso: server quality rules lint|explain ARCHIVO... --mapping ARCHIVO... [--type CAMPO=email] [--lang es|en] · server quality rules tidy ARCHIVO... [--check]",
       "mapping": {
         "parse": "No se puede leer el mapeo: {{message}}",
         "unknownKey": "La llave {{field}} no está entre los campos del mapeo",
