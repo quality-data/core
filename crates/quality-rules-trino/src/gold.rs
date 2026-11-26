@@ -39,7 +39,8 @@ pub const RUN_SUMMARY: GoldTable = GoldTable {
 
 /// The detail tables, as the PostgreSQL index stores them (decision 0089,
 /// point 2.1), plus `findings` and `finding_groups` (decision 0059) and
-/// `entity_icd`.
+/// `entity_icd`; not `job_stats`, whose stage timings are metrics (decision
+/// 0090, ruling 70).
 pub const DETAILS: &[GoldTable] = &[
     GoldTable {
         name: "rule_results",
@@ -109,10 +110,6 @@ pub const DETAILS: &[GoldTable] = &[
             ("resolved", BIGINT),
             ("priority", DOUBLE),
         ],
-    },
-    GoldTable {
-        name: "job_stats",
-        columns: &[("stage", TEXT), ("position", "INTEGER"), ("ms", BIGINT)],
     },
     GoldTable {
         name: "findings",
