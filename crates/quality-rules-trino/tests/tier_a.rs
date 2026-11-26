@@ -68,3 +68,48 @@ async fn the_rule_results_rows_give_each_rules_counts() {
         ]
     );
 }
+
+/// Ruling 40: `field_quality`'s rows on Trino over `VALUES`: the profile
+/// from bronze's columns, a double flagged floating with no shape, and the
+/// recency on the updated field only, from silver's date.
+#[tokio::test]
+async fn the_field_quality_rows_profile_bronze_and_date_silver() {
+    use quality::mapping::Mapping;
+    use quality_rules_trino::{field_quality, FieldSources, ShapeKind};
+    let Some(base) = url() else { return };
+    let mapping = Mapping::parse(
+        "dataset: loans\nsource: loans\nfields:\n  \
+         Code: { column: code, type: text }\n  \
+         Amount: { column: amount, type: number }\n  \
+         Updated: { column: updated, type: date, roles: [updated] }\n",
+    )
+    .unwrap();
+    let bronze = "(VALUES ('A1', 1.5e0, '2026-10-01'), ('', 2.0e0, '2025-01-01'), \
+                  ('B22', CAST(NULL AS DOUBLE), CAST(NULL AS VARCHAR))) t(code, amount, updated)";
+    let silver = "(VALUES (DATE '2026-10-01'), (DATE '2025-01-01'), (CAST(NULL AS DATE))) \
+                  t(\"Updated\")";
+    let from = FieldSources {
+        bronze,
+        silver,
+        job_id: "j1",
+    };
+    let kind = |c: &str| ShapeKind::of_type(if c == "amount" { "double" } else { "varchar" });
+    let body = field_quality(&mapping, &from, &[], kind).unwrap();
+    let sql = format!("SELECT * FROM ({}) x ORDER BY 1", body.sql);
+    let got = rows(&base, &trino::bound(&sql, "2026-10-31", body.cut_params)).await;
+    let want = serde_json::json!([
+        ["Amount", 1, 2, null, 0, true, null, null],
+        ["Code", 1, 2, "A9", 1, false, null, null],
+        [
+            "Updated",
+            1,
+            2,
+            "9999-99-99",
+            2,
+            false,
+            null,
+            [0, 1, 0, 0, 0, 1, 0]
+        ]
+    ]);
+    assert_eq!(serde_json::Value::from(got), want);
+}
