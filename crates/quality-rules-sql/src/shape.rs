@@ -49,8 +49,8 @@ impl ShapeKind {
                     precision + 1
                 ))
             }
-            // A `DECIMAL(38, 38)` cannot widen: no shape (decision 0090,
-            // left to the user).
+            // A `DECIMAL(38, 38)` cannot widen: no shape, as a float
+            // (decision 0090, ruling 33).
             Self::Decimal { precision, scale } if precision == scale => None,
             _ => Some(format!("CAST({value} AS VARCHAR)")),
         }
