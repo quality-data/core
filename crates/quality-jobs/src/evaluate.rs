@@ -13,8 +13,8 @@ use quality_rules::check::Compiled;
 use quality_rules::sql::Tables;
 use quality_rules_trino as trino;
 use quality_rules_trino::{
-    Accepted, Cut, FieldSources, IcdRule, Method, Run, ShapeKind, Summary, TablePath, DETAILS,
-    RUN_SUMMARY,
+    Accepted, Cut, FieldSources, IcdRule, Method, Pinned, Run, ShapeKind, Summary, TablePath,
+    DETAILS, RUN_SUMMARY,
 };
 
 use crate::steps::Steps;
@@ -43,6 +43,18 @@ pub struct EvaluateInput<'a> {
     pub rules_commit: &'a str,
     /// The window method's most distinct values (`QD_EXACT_SORT_LIMIT`).
     pub exact_sort_limit: u64,
+    /// For a backfill (step 22): the silver and bronze snapshots a cut's
+    /// manifest recorded, read as they were instead of their `$refs` now.
+    pub at: AtSnapshots,
+}
+
+/// Snapshots a backfill's evaluation is pinned to (decision 0090, point
+/// 11.3): each one given is read `FOR VERSION AS OF` it; one not given is
+/// read from its table's `$refs` in the job, as a new evaluation does.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AtSnapshots {
+    pub silver: Option<i64>,
+    pub bronze: Option<i64>,
 }
 
 /// A referenced dataset's silver, read at the same cut (`as_of`'s only
@@ -188,8 +200,25 @@ fn pins(
     input: &EvaluateInput<'_>,
     cut: &Cut,
 ) -> Result<(String, String, Tables), CompileError> {
-    let silver = pin(steps, &input.silver, SILVER_PIN, cut, input.load)?;
-    let bronze = pin(steps, &input.bronze, BRONZE_PIN, cut, input.load)?;
+    let at =
+        |table: &TablePath, snapshot: Option<i64>, name: &str, steps: &mut Steps| match snapshot {
+            Some(snapshot) => {
+                let p = Pinned {
+                    table: table.clone(),
+                    snapshot,
+                };
+                Ok(trino::accepted(
+                    &p,
+                    &Accepted {
+                        cut,
+                        load: input.load,
+                    },
+                )?)
+            }
+            None => pin(steps, table, name, cut, input.load),
+        };
+    let silver = at(&input.silver, input.at.silver, SILVER_PIN, steps)?;
+    let bronze = at(&input.bronze, input.at.bronze, BRONZE_PIN, steps)?;
     let mut tables = input.tables.clone();
     for (i, r) in input.references.iter().enumerate() {
         let read = pin(steps, &r.silver, &format!("ref_{i}_snapshot"), cut, r.load)?;
