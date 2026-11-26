@@ -82,6 +82,23 @@ fn older(table: &str, run: &Run<'_>) -> Result<String, Error> {
     rows_of(table, run, "<>")
 }
 
+/// The run's own rows of `table`, `columns` in order: what the report
+/// hands back to the core's index (decision 0090, ruling 76), read as the
+/// report user; counts and names only.
+pub fn run_read(table: &str, run: &Run<'_>, columns: &[&str]) -> Result<Statement, Error> {
+    let cols: Vec<String> = columns
+        .iter()
+        .map(|c| quality_rules_sql::quote_ident(c))
+        .collect::<Result<_, _>>()?;
+    Ok(Statement {
+        sql: format!(
+            "SELECT {} FROM {}",
+            cols.join(", "),
+            rows_of(table, run, "=")?
+        ),
+    })
+}
+
 /// Step 0's count: what an earlier attempt of this run left in `table`
 /// (`run_summary` included, a flip that committed).
 pub fn run_rows(table: &str, run: &Run<'_>) -> Result<Statement, Error> {

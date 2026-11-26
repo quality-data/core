@@ -113,7 +113,14 @@ fn the_bundle_undoes_an_attempt_pins_writes_gold_and_flips() {
     }
     assert!(at("finding_groups") < at("queue_findings"));
     assert!(at("scratch_end") < at("flip") && at("flip") < at("older_rule_results"));
-    assert_eq!(ids.last(), Some(&"older_run_summary"));
+    assert_eq!(
+        ids[ids.len() - 3..],
+        [
+            "older_run_summary",
+            "index_run_summary",
+            "index_rule_results"
+        ]
+    );
     let names: Vec<(&str, PlaceholderType)> = b
         .placeholders
         .iter()
@@ -165,7 +172,9 @@ fn the_job_user_only_writes_and_the_report_user_reads_only_gold_and_pins() {
                     s.id,
                     s.sql
                 );
-                assert!(matches!(s.expects, Expect::Rows { max_rows: 1, .. }));
+                if s.id != quality_jobs::INDEX_RULES {
+                    assert!(matches!(s.expects, Expect::Rows { max_rows: 1, .. }));
+                }
             }
         }
         let guarded = s.sql.starts_with("DELETE")

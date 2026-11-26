@@ -38,7 +38,7 @@ pub use gold_distribution::{outlier_rows, percentile_guard, percentile_row};
 pub use gold_findings::{previous_findings, run_findings, GoldFindings};
 pub use gold_scratch::{cell_rows, entity_icd, group_metrics};
 pub use gold_summary::{started_ms, summary, Summary};
-pub use gold_write::{delete_older, delete_run, flip, insert, older_rows, run_rows, Run};
+pub use gold_write::{delete_older, delete_run, flip, insert, older_rows, run_read, run_rows, Run};
 pub use icd::{measured, scratch_insert, IcdRule, Measured, FINDINGS_KEY, SCRATCH};
 pub use job_counts::{
     count_into, count_read, delete_run_counts, rule_test_counts, run_count_rows, run_counts,
