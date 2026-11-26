@@ -87,13 +87,14 @@ pub fn cell_rows(job_id: &str, mapping: &Mapping) -> Result<Statement, Error> {
 
 /// `entity_icd`'s rows: each entity's keyed hash (the scratch rows never
 /// hold the key in clear), its ICD and its band (high from 0.90, medium
-/// from 0.75, low below; none without an ICD).
+/// from 0.75, low below; none without an ICD) and its commonest segment,
+/// which people see only aggregated (ruling 73).
 pub fn entity_icd(job_id: &str, fields: &[Measured]) -> Result<Statement, Error> {
     let e = entities(job_id, fields)?;
     Ok(Statement {
         sql: format!(
             "SELECT e.k, e.icd, CASE WHEN e.icd >= {} THEN 'high' \
-             WHEN e.icd >= {} THEN 'medium' WHEN e.icd IS NOT NULL THEN 'low' END \
+             WHEN e.icd >= {} THEN 'medium' WHEN e.icd IS NOT NULL THEN 'low' END, e.s \
              FROM ({}) AS e (k, icd, s)",
             double(0.90),
             double(0.75),
@@ -151,6 +152,7 @@ fields:
         assert!(e
             .sql
             .contains("WHEN e.icd >= DOUBLE '0.9' THEN 'high' WHEN e.icd >= DOUBLE '0.75'"));
+        assert!(e.sql.contains("THEN 'low' END, e.s FROM"));
         assert!(!e.sql.contains('\n'));
         let m = Mapping::parse("dataset: d\nsource: d\nfields:\n  A: { column: a, type: text }\n")
             .unwrap();

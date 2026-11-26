@@ -129,7 +129,12 @@ pub const DETAILS: &[GoldTable] = &[
     // cuts can be matched (`band_transitions`).
     GoldTable {
         name: "entity_icd",
-        columns: &[("entity", TEXT), ("icd", DOUBLE), ("band", TEXT)],
+        columns: &[
+            ("entity", TEXT),
+            ("icd", DOUBLE),
+            ("band", TEXT),
+            ("segment", TEXT),
+        ],
     },
 ];
 
@@ -164,6 +169,49 @@ fn create(t: &GoldTable, partitioning: &str) -> String {
 
 fn plain(sql: String) -> Statement {
     Statement { sql }
+}
+
+/// The entities only aggregated (decision 0090, ruling 73): people read
+/// these, never `entity_icd`'s rows, so the views run as their owner
+/// (`SECURITY DEFINER`); people's row filter by dataset applies to them.
+fn entity_views() -> Vec<Statement> {
+    let e = "\"gold\".\"quality_gold\".\"v_entity_icd\"";
+    [
+        (
+            "v_icd_distribution",
+            format!(
+                "SELECT dataset, cut, round(least(floor(icd * 20), 19) / 20, 2) AS from_icd, \
+                 count(*) AS entities FROM {e} WHERE icd IS NOT NULL GROUP BY 1, 2, 3"
+            ),
+        ),
+        (
+            "v_bands_by_segment",
+            format!(
+                "SELECT dataset, cut, segment, count(*) FILTER (WHERE band = 'high') AS high, \
+                 count(*) FILTER (WHERE band = 'medium') AS medium, \
+                 count(*) FILTER (WHERE band = 'low') AS low, count(*) AS entities \
+                 FROM {e} WHERE band IS NOT NULL GROUP BY 1, 2, 3"
+            ),
+        ),
+        (
+            "v_band_transitions",
+            format!(
+                "WITH c AS (SELECT dataset, cut, lag(cut) OVER (PARTITION BY dataset ORDER BY cut) \
+                 AS previous FROM \"gold\".\"quality_gold\".\"current_run\") \
+                 SELECT c.dataset, c.cut, p.band AS from_band, n.band AS to_band, \
+                 count(*) AS entities FROM c JOIN {e} n ON n.dataset = c.dataset AND n.cut = c.cut \
+                 JOIN {e} p ON p.dataset = c.dataset AND p.cut = c.previous AND p.entity = n.entity \
+                 WHERE n.band IS NOT NULL AND p.band IS NOT NULL GROUP BY 1, 2, 3, 4"
+            ),
+        ),
+    ]
+    .into_iter()
+    .map(|(name, body)| {
+        plain(format!(
+            "CREATE OR REPLACE VIEW {GOLD}.\"{name}\" SECURITY DEFINER AS {body}"
+        ))
+    })
+    .collect()
 }
 
 /// The install's statements, in order: the schemas, gold's tables, the
@@ -210,6 +258,7 @@ pub fn install() -> Vec<Statement> {
             n = t.name
         )));
     }
+    out.extend(entity_views());
     out.push(crate::job_counts::create());
     out.push(plain(format!(
         "CREATE TABLE IF NOT EXISTS {} (job_id VARCHAR, dataset VARCHAR, k VARCHAR, \
@@ -256,7 +305,12 @@ mod tests {
             .iter()
             .any(|s| s.contains("\"job_counts\" (dataset VARCHAR, run VARCHAR")));
         let views: Vec<&&str> = sql.iter().filter(|s| s.contains("VIEW")).collect();
-        assert_eq!(views.len(), 2 + DETAILS.len());
+        assert_eq!(views.len(), 2 + DETAILS.len() + 3);
+        let (definer, views): (Vec<&&str>, Vec<&&str>) = views
+            .into_iter()
+            .partition(|v| v.contains("SECURITY DEFINER"));
+        assert_eq!(definer.len(), 3, "the entities' aggregates only");
+        assert!(definer.iter().all(|v| v.contains("GROUP BY")));
         for v in views {
             assert!(v.contains("SECURITY INVOKER"));
             assert!(!v.contains("USING"), "{v}");
