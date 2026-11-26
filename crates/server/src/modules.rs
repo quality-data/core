@@ -70,7 +70,7 @@ pub(crate) fn serving(
     let review = dolt.map(|d| d as Arc<dyn DraftCatalog>);
     let bundles = provider
         .clone()
-        .and_then(|p| bundle_services(p, pool.clone(), catalog.clone()));
+        .and_then(|p| bundle_services(p, pool.clone(), catalog.clone(), manifests.clone()));
     let run_tokens = provider
         .clone()
         .and_then(|p| run_token_services(p, pool.clone()));
@@ -311,12 +311,17 @@ fn bundle_services(
     p: AuthorizationServer,
     pool: PgPool,
     catalog: Option<Arc<dyn Catalog>>,
+    manifests: Option<Arc<dyn ManifestStore>>,
 ) -> Option<BundleServices> {
     p.sign_es256(quality::bundle::BUNDLE_TYP, "{}")?;
     Some(BundleServices {
         tokens: Arc::new(BundleTokens(p.clone())),
         signer: Arc::new(ProviderBundles(p)),
-        compiler: Arc::new(crate::job_compiler::TrinoJobs { pool, catalog }),
+        compiler: Arc::new(crate::job_compiler::TrinoJobs {
+            pool,
+            catalog,
+            manifests,
+        }),
     })
 }
 

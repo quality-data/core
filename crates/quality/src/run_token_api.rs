@@ -50,7 +50,9 @@ impl TrinoUser {
 /// Trino, each over its dataset.
 fn users_of(kind: &str) -> &'static [TrinoUser] {
     match kind {
-        "evaluate" | "rule_test" | "retract" | "slas" => &[TrinoUser::Rules, TrinoUser::Report],
+        "evaluate" | "backfill" | "rule_test" | "retract" | "slas" => {
+            &[TrinoUser::Rules, TrinoUser::Report]
+        }
         "prepare" => &[TrinoUser::Maint],
         "extract" => &[TrinoUser::Extract, TrinoUser::Report],
         _ => &[],

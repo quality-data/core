@@ -239,3 +239,105 @@ async fn the_mapped_tables_columns_come_from_the_sources_listing() {
         Err(FactsError::Refused("source_table_not_listed"))
     );
 }
+
+/// Step 22's backfill: a retained cut's facts come from the commit its
+/// manifest names, with the snapshots it recorded.
+#[tokio::test]
+async fn a_backfill_reads_the_cuts_manifest_and_the_catalog_at_its_commit() {
+    use quality::job_inputs::{backfill_facts, RecordedSnapshots};
+    use quality::manifest::ManifestStore;
+
+    struct AtCommit;
+    #[async_trait]
+    impl Catalog for AtCommit {
+        async fn snapshot(&self, _: &str) -> Result<Option<CatalogSnapshot>, String> {
+            Err("not main".into())
+        }
+        async fn mappings(&self) -> Result<Vec<DatasetMapping>, String> {
+            Ok(vec![])
+        }
+        async fn snapshot_at(
+            &self,
+            dataset: &str,
+            commit: &str,
+        ) -> Result<Option<CatalogSnapshot>, String> {
+            Files(RULES).snapshot(dataset).await.map(|s| {
+                s.map(|s| CatalogSnapshot {
+                    commit: commit.into(),
+                    ..s
+                })
+            })
+        }
+    }
+    struct Manifests;
+    #[async_trait]
+    impl ManifestStore for Manifests {
+        async fn put_once(&self, _: &str, _: &str, _: Vec<u8>) -> Result<bool, String> {
+            Ok(false)
+        }
+        async fn get(&self, _: &str, key: &str) -> Result<Option<Vec<u8>>, String> {
+            Ok((key == "manifests/loans.json").then(|| {
+                serde_json::json!({
+                    "format": 1, "job": "0b9c6a1e-0000-4000-8000-000000000021",
+                    "dataset": "loans", "cut": "2026-10-31",
+                    "reported_at": "2026-11-01T00:00:00Z", "duration_ms": 1, "records": 3,
+                    "catalog_commit": "abc123", "compiler": "t", "files": [],
+                    "snapshots": [
+                        {"dataset": "loans", "snapshot": "77", "layer": "silver"},
+                        {"dataset": "loans", "snapshot": "55"}
+                    ],
+                    "rules": []
+                })
+                .to_string()
+                .into_bytes()
+            }))
+        }
+    }
+
+    let db = testkit::spawn_test_db().await;
+    sqlx::query("CREATE ROLE qd_queue LOGIN PASSWORD 'queue'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let mut migrator = PgModuleMigrator::load(&db.pool).await.unwrap();
+    ModuleRegistry::new()
+        .register(QualityModule::default())
+        .run_migrations(&mut migrator)
+        .unwrap();
+    migrator.run(&db.pool).await.unwrap();
+    let options = testkit::app_role(&db).await;
+    for sql in [
+        "GRANT USAGE ON SCHEMA quality TO app",
+        "ALTER TABLE quality.cuts OWNER TO app",
+        "ALTER TABLE quality.run_summary OWNER TO app",
+    ] {
+        sqlx::query(sql).execute(&db.pool).await.unwrap();
+    }
+    let app = PgPoolOptions::new()
+        .max_connections(2)
+        .connect_with(options)
+        .await
+        .unwrap();
+    let cut = day("2026-10-31");
+    let refused = backfill_facts(&app, &AtCommit, &Manifests, "loans", cut).await;
+    assert_eq!(refused.unwrap_err(), FactsError::Refused("no_manifest"));
+    sqlx::query(
+        "INSERT INTO quality.run_summary (dataset, cut, job_id, records, duration_ms, rules_commit, manifest)
+         VALUES ('loans', DATE '2026-10-31', gen_random_uuid(), 3, 1, 'abc123', 'manifests/loans.json')",
+    )
+    .execute(&app)
+    .await
+    .unwrap();
+    let (f, at) = backfill_facts(&app, &AtCommit, &Manifests, "loans", cut)
+        .await
+        .unwrap();
+    assert_eq!(f.commit, "abc123");
+    assert_eq!(f.rules.len(), 1);
+    assert_eq!(
+        at,
+        RecordedSnapshots {
+            silver: Some(77),
+            bronze: Some(55)
+        }
+    );
+}

@@ -10,6 +10,8 @@ use quality_rules::tree::parse_expr;
 use sqlx::PgPool;
 
 use crate::catalog::Catalog;
+use crate::lake::WAREHOUSE;
+use crate::manifest::{EvaluateManifest, ManifestStore};
 use crate::mapping::Mapping;
 
 /// The next value of gold's run order: each compile of a gold writer
@@ -92,6 +94,72 @@ pub async fn evaluate_facts(
         .await
         .map_err(FactsError::Failed)?
         .ok_or(FactsError::Refused("no_mapping"))?;
+    facts_of(pool, snapshot, dataset, cut).await
+}
+
+/// A retained cut's facts for its backfill (decision 0090, step 22, point
+/// 11.3): the mapping and rules at the commit its manifest names, and the
+/// silver and bronze snapshots the manifest recorded.
+pub async fn backfill_facts(
+    pool: &PgPool,
+    catalog: &dyn Catalog,
+    manifests: &dyn ManifestStore,
+    dataset: &str,
+    cut: NaiveDate,
+) -> Result<(EvaluateFacts, RecordedSnapshots), FactsError> {
+    let key: Option<Option<String>> = sqlx::query_scalar(
+        "SELECT manifest FROM quality.run_summary WHERE dataset = $1 AND cut = $2",
+    )
+    .bind(dataset)
+    .bind(cut)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| FactsError::Failed(e.to_string()))?;
+    let key = key.flatten().ok_or(FactsError::Refused("no_manifest"))?;
+    let body = manifests
+        .get(WAREHOUSE, &key)
+        .await
+        .map_err(FactsError::Failed)?
+        .ok_or(FactsError::Refused("no_manifest"))?;
+    let manifest: EvaluateManifest =
+        serde_json::from_slice(&body).map_err(|_| FactsError::Refused("manifest_invalid"))?;
+    let snapshot = catalog
+        .snapshot_at(dataset, &manifest.catalog_commit)
+        .await
+        .map_err(FactsError::Failed)?
+        .ok_or(FactsError::Refused("no_mapping"))?;
+    let recorded = RecordedSnapshots::of(&manifest, dataset);
+    Ok((facts_of(pool, snapshot, dataset, cut).await?, recorded))
+}
+
+/// The snapshots a manifest recorded of the dataset's silver and bronze.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RecordedSnapshots {
+    pub silver: Option<i64>,
+    pub bronze: Option<i64>,
+}
+
+impl RecordedSnapshots {
+    fn of(m: &EvaluateManifest, dataset: &str) -> Self {
+        let at = |silver: bool| {
+            m.snapshots
+                .iter()
+                .find(|s| s.dataset == dataset && (s.layer.as_deref() == Some("silver")) == silver)
+                .and_then(|s| s.snapshot.parse().ok())
+        };
+        Self {
+            silver: at(true),
+            bronze: at(false),
+        }
+    }
+}
+
+async fn facts_of(
+    pool: &PgPool,
+    snapshot: crate::catalog::CatalogSnapshot,
+    dataset: &str,
+    cut: NaiveDate,
+) -> Result<EvaluateFacts, FactsError> {
     let mapping =
         Mapping::parse(&snapshot.mapping).map_err(|_| FactsError::Refused("mapping_invalid"))?;
     let schema = mapping.schema();
