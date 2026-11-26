@@ -58,6 +58,7 @@ mod rule_test_view;
 pub mod rules_api;
 pub mod rules_text;
 pub mod run_report_api;
+pub mod run_rows_api;
 pub mod run_source_api;
 pub mod run_token_api;
 pub mod schedule;

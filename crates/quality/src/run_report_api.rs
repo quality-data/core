@@ -90,11 +90,16 @@ struct Api {
     services: RunReportServices,
 }
 
-/// `POST /internal/quality/v1/runs/{run}/report`.
+/// `POST /internal/quality/v1/runs/{run}/report`, and the values reads'
+/// `POST …/runs/{run}/rows` ([`crate::run_rows_api`]).
 pub fn routes(pool: PgPool, services: RunReportServices) -> Router {
     Router::new()
         .route("/internal/quality/v1/runs/{run}/report", post(report))
-        .with_state(Api { pool, services })
+        .with_state(Api {
+            pool: pool.clone(),
+            services: services.clone(),
+        })
+        .merge(crate::run_rows_api::routes(pool, services))
 }
 
 type Refusal = (StatusCode, Json<Value>);
@@ -120,7 +125,7 @@ fn internal(e: impl std::fmt::Display) -> Refusal {
 }
 
 /// Whether `v` is a value of the Trino type `ty` (or null).
-fn takes(ty: &str, v: &Value) -> bool {
+pub(crate) fn takes(ty: &str, v: &Value) -> bool {
     use crate::index_rows::ColumnType as T;
     let t = match ty {
         "bigint" => T::Bigint,

@@ -35,7 +35,20 @@ pub enum Expect {
     },
     /// A statement that answers nothing but success (`CREATE`, `ALTER`).
     Done,
+    /// A read whose rows carry values (rulings 79 and 80): exactly these
+    /// columns, at most `max_rows` rows, never more than
+    /// [`MAX_VALUES_ROWS`]. Run as the job's own user; its rows go to
+    /// `POST …/runs/{run}/rows`, never into the report, and the job runner
+    /// logs none of them.
+    Values {
+        columns: Vec<(String, String)>,
+        max_rows: u64,
+    },
 }
+
+/// The most rows a values read may give: a page of a source's records and
+/// the one more that says there are others (decision 0049).
+pub const MAX_VALUES_ROWS: u64 = 1_001;
 
 impl Expect {
     /// An `INSERT`'s count.
@@ -50,6 +63,11 @@ impl Expect {
         Self::Count {
             update_types: vec!["DELETE".into()],
         }
+    }
+
+    /// Whether it is a values read.
+    pub fn is_values(&self) -> bool {
+        matches!(self, Self::Values { .. })
     }
 }
 
@@ -140,6 +158,7 @@ impl Bundle {
                 .iter()
                 .enumerate()
                 .all(|(i, s)| self.steps_checked(i, s))
+            && self.statements.iter().all(values_checked)
     }
 
     /// The statement `id` among the first `before`, if any.
@@ -175,6 +194,19 @@ impl Bundle {
                 .is_some_and(|c| is_count_read(&c.expects))
         });
         filled && guarded
+    }
+}
+
+/// A values read within the hard limit, with columns, as the job's own
+/// user: the report user reads gold, which holds no values.
+fn values_checked(s: &BundleStatement) -> bool {
+    match &s.expects {
+        Expect::Values { columns, max_rows } => {
+            !columns.is_empty()
+                && (1..=MAX_VALUES_ROWS).contains(max_rows)
+                && s.run_as == RunAs::Job
+        }
+        _ => true,
     }
 }
 
@@ -340,5 +372,35 @@ mod tests {
             verify(&key, &not_a_bundle, &b.job_id, &b.digest()),
             Err(BundleError::Shape)
         );
+    }
+
+    #[test]
+    fn a_values_read_is_bounded_and_run_as_the_job() {
+        let values = |max_rows| Expect::Values {
+            columns: vec![("name".into(), "varchar".into())],
+            max_rows,
+        };
+        let mut b = bundle();
+        b.statements[0].expects = values(MAX_VALUES_ROWS);
+        b.statements[0].reads_source = true;
+        assert!(b.well_formed());
+        assert!(b.canonical().contains(
+            "\"expects\":{\"kind\":\"values\",\"columns\":[[\"name\",\"varchar\"]],\"max_rows\":1001}"
+        ));
+        let refused = |change: &dyn Fn(&mut BundleStatement)| {
+            let mut b = bundle();
+            b.statements[0].expects = values(10);
+            change(&mut b.statements[0]);
+            !b.well_formed()
+        };
+        assert!(refused(&|s| s.expects = values(MAX_VALUES_ROWS + 1)));
+        assert!(refused(&|s| s.expects = values(0)));
+        assert!(refused(&|s| s.run_as = RunAs::Report));
+        assert!(refused(&|s| {
+            s.expects = Expect::Values {
+                columns: vec![],
+                max_rows: 1,
+            }
+        }));
     }
 }
