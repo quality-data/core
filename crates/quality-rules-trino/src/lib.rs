@@ -38,7 +38,7 @@ pub use retract::{
     dataset_rows, delete_dataset, delete_older_slas, delete_run_slas, insert_slas, older_slas,
     run_slas, tombstone, Sla,
 };
-pub use rules::rule_counts;
+pub use rules::{rule_counts, rule_results};
 pub use scratch::{cells, entities, groups, means, scratch_delete, scratch_rows};
 
 use quality_rules_sql::quote_ident;
