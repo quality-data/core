@@ -3147,6 +3147,9 @@ dependencies = [
  "quality",
  "quality-rules",
  "quality-rules-trino",
+ "reqwest",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

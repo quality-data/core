@@ -17,3 +17,10 @@ workspace = true
 quality.workspace = true
 quality-rules.workspace = true
 quality-rules-trino.workspace = true
+
+[dev-dependencies]
+# The contract tier B's stand-in job runner (tests/tier_b), when
+# QD_TIER_B_URL is set (tools/verify/trino_tier_b.sh).
+reqwest.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
