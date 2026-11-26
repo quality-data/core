@@ -11,6 +11,7 @@ mod extract;
 mod field_quality;
 mod findings;
 mod gold;
+mod gold_distribution;
 mod gold_findings;
 mod gold_scratch;
 mod gold_write;
@@ -29,6 +30,7 @@ pub use extract::{
 pub use field_quality::{field_quality, FieldSources};
 pub use findings::{finding_groups, findings, queues, Findings};
 pub use gold::{install, GoldTable, DETAILS, GOLD, REMEDIATION_SLAS, RUN_SUMMARY};
+pub use gold_distribution::{outlier_rows, percentile_guard, percentile_row};
 pub use gold_findings::{previous_findings, run_findings, GoldFindings};
 pub use gold_scratch::{cell_rows, entity_icd, group_metrics};
 pub use gold_write::{delete_older, delete_run, flip, insert, older_rows, run_rows, Run};

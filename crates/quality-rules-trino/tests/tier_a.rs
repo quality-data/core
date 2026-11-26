@@ -113,3 +113,58 @@ async fn the_field_quality_rows_profile_bronze_and_date_silver() {
     ]);
     assert_eq!(serde_json::Value::from(got), want);
 }
+
+/// Ruling 40: `distribution_checks`' rows on Trino over `VALUES`: each
+/// method's guard picks one, both give the same 101 percentiles, and the
+/// outliers come per dimension group.
+#[tokio::test]
+async fn the_distribution_rows_take_one_method_and_the_outlier_groups() {
+    use quality::mapping::Mapping;
+    use quality_rules_trino::{outlier_rows, percentile_guard, percentile_row};
+    let Some(base) = url() else { return };
+    let from = "(VALUES (10e0, 'A', 'X'), (11e0, 'A', 'X'), (12e0, 'A', 'Y'), (13e0, 'B', 'Y'), \
+                (CAST(NULL AS DOUBLE), 'B', 'Y')) t(\"Income\", \"Office\", \"Type\")";
+    for (method, want) in [(Method::Window, 1), (Method::Bracket, 0)] {
+        let g = percentile_guard(from, "Income", 4, method).unwrap();
+        assert_eq!(
+            rows(&base, &g.sql).await,
+            vec![vec![serde_json::json!(want)]]
+        );
+    }
+    let w = rows(
+        &base,
+        &percentile_row(from, "Income", Method::Window).unwrap().sql,
+    )
+    .await;
+    let b = rows(
+        &base,
+        &percentile_row(from, "Income", Method::Bracket).unwrap().sql,
+    )
+    .await;
+    assert_eq!(w, b);
+    assert_eq!(w[0][0], serde_json::json!("Income"));
+    assert_eq!(w[0][3].as_array().unwrap().len(), 101);
+    assert_eq!(w[0][3][0], serde_json::json!(10.0));
+    assert_eq!(w[0][3][100], serde_json::json!(13.0));
+    let none = "(VALUES (CAST(NULL AS DOUBLE))) t(\"Income\")";
+    let empty = percentile_row(none, "Income", Method::Window).unwrap();
+    assert!(rows(&base, &empty.sql).await.is_empty());
+    let mapping = Mapping::parse(
+        "dataset: d\nsource: d\nfields:\n  \
+         Income: { column: i, type: number, roles: [outlier_amount] }\n  \
+         Office: { column: o, type: text, roles: [dimension] }\n  \
+         Type: { column: t, type: text, roles: [dimension] }\n",
+    )
+    .unwrap();
+    let o = outlier_rows(from, &mapping).unwrap();
+    let sql = format!("SELECT * FROM ({}) x ORDER BY 2, 3", o.sql);
+    assert_eq!(
+        serde_json::Value::from(rows(&base, &sql).await),
+        serde_json::json!([
+            ["Income", "Office", "A", null, 3, 0, 0],
+            ["Income", "Office", "B", null, 1, 0, 0],
+            ["Income", "Type", "X", null, 2, 0, 0],
+            ["Income", "Type", "Y", null, 2, 0, 0]
+        ])
+    );
+}
