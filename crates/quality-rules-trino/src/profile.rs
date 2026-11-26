@@ -15,6 +15,14 @@ pub const SHAPE_LEN: usize = 40;
 /// a last band takes the older ones.
 pub const RECENCY_DAYS: [i64; 5] = [30, 90, 180, 365, 730];
 
+/// A mapped field's profile over bronze's accepted load (decision 0090,
+/// ruling 32): bronze keeps the source's integer and decimal types, which
+/// silver turns into `DOUBLE`, so the profile reads `column`, the field's
+/// column, with the kind of `bronze_type`, its type in bronze.
+pub fn bronze_profile(bronze: &str, column: &str, bronze_type: &str) -> Result<Statement, Error> {
+    field_profile(bronze, column, ShapeKind::of_type(bronze_type))
+}
+
 /// One row over `from`: the field's empties (decision 0033: `NULL`, blank
 /// or only spaces), its distinct values, its commonest shape (each digit
 /// `9`, each ASCII letter `A`, cut at [`SHAPE_LEN`]) and how many have it.
@@ -106,6 +114,16 @@ mod tests {
         let s = field_profile("t", "Amount", ShapeKind::Float).unwrap();
         assert!(s.sql.contains("CAST(NULL AS VARCHAR) AS t"));
         assert!(s.sql.contains("FROM f WHERE t IS NOT NULL"));
+    }
+
+    #[test]
+    fn bronzes_type_gives_the_kind() {
+        let s = bronze_profile("b", "monto", "decimal(4,4)").unwrap();
+        assert!(s
+            .sql
+            .contains("CAST(CAST(\"monto\" AS DECIMAL(5, 4)) AS VARCHAR) AS t"));
+        let s = bronze_profile("b", "monto", "decimal(38,38)").unwrap();
+        assert!(s.sql.contains("CAST(NULL AS VARCHAR) AS t"));
     }
 
     #[test]

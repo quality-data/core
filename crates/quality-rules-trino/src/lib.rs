@@ -31,7 +31,7 @@ pub use loads::{
     accepted, create_silver, delete_load, derive_silver, loads_of_cut, migrate_to_loads, Accepted,
     LOAD,
 };
-pub use profile::{field_profile, recency, shape_of, RECENCY_DAYS, SHAPE_LEN};
+pub use profile::{bronze_profile, field_profile, recency, shape_of, RECENCY_DAYS, SHAPE_LEN};
 pub use quality_rules_sql::ShapeKind;
 pub use read::{current_snapshot, pinned, typed_select, Pinned, TablePath};
 pub use retract::{
