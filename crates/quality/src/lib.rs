@@ -56,6 +56,7 @@ pub mod rule_test;
 mod rule_test_view;
 pub mod rules_api;
 pub mod rules_text;
+pub mod run_token_api;
 pub mod schedule;
 pub mod schedule_api;
 pub mod schedule_store;

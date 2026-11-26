@@ -26,6 +26,7 @@ use crate::proposal::Patterns;
 use crate::records_api;
 use crate::rule_test;
 use crate::rules_api;
+use crate::run_token_api::{self, RunTokenServices};
 use crate::schedule_api;
 use crate::sla_api;
 use crate::source_api;
@@ -44,6 +45,7 @@ pub struct QualityModule {
     patterns: Patterns,
     drafts: Option<Arc<dyn DraftCatalog>>,
     bundles: Option<(PgPool, BundleServices)>,
+    run_tokens: Option<(PgPool, RunTokenServices)>,
 }
 
 /// What the sources' routes use: the store, its sealer, and the catalog.
@@ -71,6 +73,7 @@ impl QualityModule {
             patterns: Patterns::default(),
             drafts: None,
             bundles: None,
+            run_tokens: None,
         }
     }
 
@@ -104,6 +107,14 @@ impl QualityModule {
     #[must_use]
     pub fn with_bundles(mut self, pool: PgPool, services: BundleServices) -> Self {
         self.bundles = Some((pool, services));
+        self
+    }
+
+    /// With the route that gives a run's job runner its Trino tokens
+    /// (decision 0090, point 7.1).
+    #[must_use]
+    pub fn with_run_tokens(mut self, pool: PgPool, services: RunTokenServices) -> Self {
+        self.run_tokens = Some((pool, services));
         self
     }
 
@@ -181,9 +192,15 @@ impl Module for QualityModule {
             Some((pool, services)) => worker_api::routes(pool.clone(), services.clone()),
             None => Router::new(),
         };
-        match &self.bundles {
+        let workers = match &self.bundles {
             Some((pool, services)) => {
                 workers.merge(bundle_api::routes(pool.clone(), services.clone()))
+            }
+            None => workers,
+        };
+        match &self.run_tokens {
+            Some((pool, services)) => {
+                workers.merge(run_token_api::routes(pool.clone(), services.clone()))
             }
             None => workers,
         }
