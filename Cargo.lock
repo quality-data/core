@@ -2962,6 +2962,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum",
+ "base64 0.22.1",
  "chrono",
  "chrono-tz",
  "contracts",
@@ -2984,6 +2985,14 @@ dependencies = [
  "tracing",
  "utoipa",
  "uuid",
+]
+
+[[package]]
+name = "quality-jobs"
+version = "0.1.0"
+dependencies = [
+ "quality",
+ "quality-rules-trino",
 ]
 
 [[package]]

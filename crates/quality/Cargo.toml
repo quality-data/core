@@ -45,6 +45,8 @@ sha2.workspace = true
 prometheus-client.workspace = true
 
 [dev-dependencies]
+# A stand-in key for the bundle's tests (src/bundle.rs).
+base64.workspace = true
 # The module's migrations applied on an ephemeral PostgreSQL (testkit).
 infrastructure.workspace = true
 testkit.workspace = true

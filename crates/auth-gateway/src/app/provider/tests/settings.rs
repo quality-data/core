@@ -367,3 +367,22 @@ fn settings_that_need_a_secret_are_refused_for_a_public_client() {
     };
     assert!(no_audience.check(&confidential()).is_err());
 }
+
+#[tokio::test]
+async fn the_es256_key_signs_what_is_no_applications_token() {
+    let f = fixture_with(ClientAuth::Public, ClientSettings::default());
+    assert_eq!(
+        f.server.sign_es256("qd-bundle+jwt", "{}"),
+        None,
+        "no ES256 key"
+    );
+    let server = f.server.with_signer(Arc::new(TaggedSigner("ES256")));
+    let token = server
+        .sign_es256("qd-bundle+jwt", "{\"job_id\":\"j\"}")
+        .unwrap();
+    assert_eq!(
+        server.verify_es256("qd-bundle+jwt", &token).as_deref(),
+        Some("{\"job_id\":\"j\"}")
+    );
+    assert_eq!(server.verify_es256("JWT", &token), None, "another type");
+}
