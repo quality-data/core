@@ -261,6 +261,13 @@ impl ManifestStore for LakeManifests {
             .map(|w| w == WriteOnce::Written)
             .map_err(|e| e.to_string())
     }
+
+    async fn get(&self, warehouse: &str, key: &str) -> Result<Option<Vec<u8>>, String> {
+        self.0
+            .read_object(warehouse, key)
+            .await
+            .map_err(|e| e.to_string())
+    }
 }
 
 /// A job's lake credentials, within its grant, from the lake's STS.
