@@ -28,7 +28,8 @@ mod scratch;
 
 pub use distribution::{outliers, variable_percentiles, Method};
 pub use extract::{
-    bronze_type, create_bronze, create_catalog, extract, split, Connector, Conversion, Range,
+    bronze_type, create_bronze, create_catalog, extract, extract_split, key_range, split,
+    Connector, Conversion, Range,
 };
 pub use field_quality::{field_quality, FieldSources};
 pub use findings::{finding_groups, findings, queues, Findings};

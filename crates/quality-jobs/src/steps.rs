@@ -76,6 +76,13 @@ impl Steps {
         }
     }
 
+    /// The last statement reads the source (its secrets go with it).
+    pub(crate) fn source_reads_last(&mut self) {
+        if let Some(last) = self.statements.last_mut() {
+            last.reads_source = true;
+        }
+    }
+
     /// A read as the job's own user, which may read its own tables (an
     /// extract's bronze), unlike a rule user.
     pub(crate) fn job_read(&mut self, id: String, s: Statement, expects: Expect) {
