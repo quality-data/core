@@ -69,7 +69,7 @@ pub(crate) fn serving(
     let review = dolt.map(|d| d as Arc<dyn DraftCatalog>);
     let bundles = provider
         .clone()
-        .and_then(|p| bundle_services(p, pool.clone()));
+        .and_then(|p| bundle_services(p, pool.clone(), catalog.clone()));
     let quality = match provider {
         Some(p) => QualityModule::serving(
             pool.clone(),
@@ -280,12 +280,16 @@ impl quality::worker_api::MachineTokens for ProviderTokens {
 /// The bundle route's services (decision 0090, point 2): bundles signed
 /// with the provider's ES256 key, asked with machine tokens for the job
 /// runners' audience; `None` without that key.
-fn bundle_services(p: AuthorizationServer, pool: PgPool) -> Option<BundleServices> {
+fn bundle_services(
+    p: AuthorizationServer,
+    pool: PgPool,
+    catalog: Option<Arc<dyn Catalog>>,
+) -> Option<BundleServices> {
     p.sign_es256(quality::bundle::BUNDLE_TYP, "{}")?;
     Some(BundleServices {
         tokens: Arc::new(BundleTokens(p.clone())),
         signer: Arc::new(ProviderBundles(p)),
-        compiler: Arc::new(crate::job_compiler::TrinoJobs { pool }),
+        compiler: Arc::new(crate::job_compiler::TrinoJobs { pool, catalog }),
     })
 }
 
