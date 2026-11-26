@@ -6,7 +6,7 @@
 //! extra credentials; the last statement reads bronze's columns and types,
 //! which the job's report hands back to the core.
 
-use quality::bundle::{Bundle, Expect};
+use quality::bundle::{Bundle, Expect, PlaceholderType};
 use quality_rules_trino as trino;
 use quality_rules_trino::{Cut, TablePath};
 
@@ -21,7 +21,13 @@ pub struct ExtractInput<'a> {
     pub source: TablePath,
     pub bronze: TablePath,
     pub columns: &'a [(String, String)],
+    /// A numeric key column and how many ranges to read it in (point 9);
+    /// `None` or 1: one scan.
+    pub split: Option<(&'a str, u32)>,
 }
+
+/// The read of the split key's smallest and largest values.
+const KEY_RANGE: &str = "key_range";
 
 /// The most columns bronze's listing gives back.
 const MAX_COLUMNS: u64 = 4096;
@@ -45,13 +51,41 @@ pub fn extract(job: &Job<'_>, input: &ExtractInput<'_>) -> Result<Bundle, Compil
         trino::delete_load(&input.bronze, &cut, job.run)?,
         after,
     );
-    let load = trino::extract(
-        &input.bronze,
-        &input.source,
-        input.columns,
-        (&cut, job.run),
-        None,
-    )?;
+    let load = match input.split.filter(|(_, n)| *n > 1) {
+        Some((key, n)) => {
+            let range = trino::key_range(&input.source, key)?;
+            steps.job_read(
+                KEY_RANGE.into(),
+                range,
+                Expect::Rows {
+                    columns: vec![
+                        ("lo".into(), "bigint".into()),
+                        ("hi".into(), "bigint".into()),
+                    ],
+                    max_rows: 1,
+                },
+            );
+            steps.source_reads_last();
+            steps.placeholder("key_lo", PlaceholderType::Bigint, KEY_RANGE, "lo");
+            steps.placeholder("key_hi", PlaceholderType::Bigint, KEY_RANGE, "hi");
+            trino::extract_split(
+                &input.bronze,
+                &input.source,
+                input.columns,
+                (&cut, job.run),
+                key,
+                ("key_lo", "key_hi"),
+                n,
+            )?
+        }
+        None => trino::extract(
+            &input.bronze,
+            &input.source,
+            input.columns,
+            (&cut, job.run),
+            None,
+        )?,
+    };
     steps.source_insert("load".into(), load);
     steps.job_read(
         "bronze_columns".into(),
@@ -87,6 +121,7 @@ mod tests {
             source: path("src_core", "public", "loans"),
             bronze: path("lake", "loans_bronze", "loans"),
             columns: &columns,
+            split: None,
         };
         let job = Job {
             run: "0b9c6a1e-0000-4000-8000-000000000005",
@@ -128,6 +163,17 @@ mod tests {
         let columns = &b.statements[6];
         assert_eq!(columns.run_as, RunAs::Job);
         assert!(!b.statements.iter().any(|s| s.sql.contains("CREATE")));
+        let split = ExtractInput {
+            split: Some(("loan_id", 4)),
+            ..input.clone()
+        };
+        let b = extract(&job, &split).unwrap();
+        assert!(b.well_formed());
+        let range = b.statements.iter().find(|s| s.id == "key_range").unwrap();
+        assert!(range.reads_source && range.run_as == RunAs::Job);
+        assert_eq!(b.placeholders.len(), 2);
+        let load = b.statements.iter().find(|s| s.id == "load").unwrap();
+        assert_eq!(load.sql.matches(" UNION ALL ").count(), 3);
         assert_eq!(
             extract(&Job { cut: None, ..job }, &input),
             Err(CompileError::Incomplete("cut"))
