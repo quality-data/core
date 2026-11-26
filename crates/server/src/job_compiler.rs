@@ -10,11 +10,14 @@ use infrastructure::PgPool;
 use quality::bundle::Bundle;
 use quality::bundle_api::{CompileRefused, JobCompiler, JobRequest};
 use quality::catalog::Catalog;
-use quality::job_inputs::{dataset_slas, evaluate_facts, next_run_seq, source_columns, FactsError};
+use quality::job_inputs::{
+    backfill_facts, dataset_slas, evaluate_facts, next_run_seq, source_columns, FactsError,
+};
+use quality::manifest::ManifestStore;
 use quality::mapping::Mapping;
 use quality_jobs::{
-    CompileError, EvaluateInput, ExtractInput, Job, PrepareInput, ReferencePin, RetractInput,
-    SlasInput,
+    AtSnapshots, CompileError, EvaluateInput, ExtractInput, Job, PrepareInput, ReferencePin,
+    RetractInput, SlasInput,
 };
 use quality_rules_trino::{Sla, TablePath};
 
@@ -26,6 +29,8 @@ pub(crate) struct TrinoJobs {
     pub(crate) pool: PgPool,
     /// The catalog's `main`, which an evaluate's mapping and rules come from.
     pub(crate) catalog: Option<Arc<dyn Catalog>>,
+    /// The runs' manifests, which a backfill is pinned to.
+    pub(crate) manifests: Option<Arc<dyn ManifestStore>>,
 }
 
 fn exact_sort_limit() -> u64 {
@@ -126,6 +131,7 @@ impl JobCompiler for TrinoJobs {
                 quality_jobs::slas(&j, &SlasInput { slas }).map_err(refused)
             }
             "evaluate" => self.evaluate(j, job).await,
+            "backfill" => self.backfill(j, job).await,
             "prepare" => self.prepare(j).await,
             "extract" => self.extract(j).await,
             _ => Err(CompileRefused("kind_not_compiled")),
@@ -237,10 +243,41 @@ impl TrinoJobs {
             .ok_or(CompileRefused("catalog_not_configured"))?;
         let facts = evaluate_facts(&self.pool, catalog, dataset, cut)
             .await
-            .map_err(|e| match e {
-                FactsError::Refused(class) => CompileRefused(class),
-                FactsError::Failed(e) => database(e),
-            })?;
+            .map_err(facts)?;
+        self.compile_evaluate(j, facts, AtSnapshots::default())
+            .await
+    }
+
+    /// A backfill (step 22): an evaluate of a retained cut pinned to its
+    /// manifest's rules commit and silver and bronze snapshots.
+    async fn backfill(&self, j: Job<'_>, job: &JobRequest) -> Result<Bundle, CompileRefused> {
+        let (Some(dataset), Some(cut)) = (j.dataset, job.cut) else {
+            return Err(CompileRefused("job_incomplete"));
+        };
+        let catalog = self
+            .catalog
+            .as_deref()
+            .ok_or(CompileRefused("catalog_not_configured"))?;
+        let manifests = self
+            .manifests
+            .as_deref()
+            .ok_or(CompileRefused("lake_not_configured"))?;
+        let (f, at) = backfill_facts(&self.pool, catalog, manifests, dataset, cut)
+            .await
+            .map_err(facts)?;
+        let at = AtSnapshots {
+            silver: at.silver,
+            bronze: at.bronze,
+        };
+        self.compile_evaluate(j, f, at).await
+    }
+
+    async fn compile_evaluate(
+        &self,
+        j: Job<'_>,
+        facts: quality::job_inputs::EvaluateFacts,
+        at: AtSnapshots,
+    ) -> Result<Bundle, CompileRefused> {
         let (bronze_ns, bronze_table) = quality::layers::bronze(&facts.mapping);
         let (silver_ns, silver_table) =
             quality::layers::silver(&facts.mapping).ok_or(CompileRefused("no_silver"))?;
@@ -272,7 +309,7 @@ impl TrinoJobs {
             bronze_types: &BTreeMap::new(),
             rules_commit: &facts.commit,
             exact_sort_limit: exact_sort_limit(),
-            at: Default::default(),
+            at,
         };
         quality_jobs::evaluate(&j, &input).map_err(refused)
     }
