@@ -95,3 +95,46 @@ fn a_load_is_one_insert_of_union_all_ranges() {
     assert!(!one.contains("UNION ALL") && !one.contains("WHERE"));
     assert_eq!(split(5, 5, 4), [(5, None)]);
 }
+
+/// Point 9's key ranges without a value at compile: the job reads the
+/// key's range first, and each branch's bounds are bigint tokens the job
+/// runner fills (amendment A1), cut as `split` cuts them.
+#[test]
+fn a_load_splits_by_the_keys_range_read_in_the_job() {
+    let bronze = t("lake", "loans_bronze", "loans");
+    let source = t("src_core1", "ops", "loans");
+    let cols = [("id".to_string(), "bigint".to_string())];
+    let cut = quality_rules_trino::Cut::parse("2026-10-31").unwrap();
+    let s = quality_rules_trino::extract_split(
+        &bronze,
+        &source,
+        &cols,
+        (&cut, "job-1"),
+        "id",
+        ("key_lo", "key_hi"),
+        3,
+    )
+    .unwrap()
+    .sql;
+    assert_eq!(s.matches(" UNION ALL ").count(), 2);
+    assert!(s.contains(
+        "WHERE \"id\" >= {{key_lo}} + 0 * (({{key_hi}} - {{key_lo}}) / 3 + 1) \
+         AND \"id\" < {{key_lo}} + 1 * (({{key_hi}} - {{key_lo}}) / 3 + 1)"
+    ));
+    assert!(s.ends_with("WHERE \"id\" >= {{key_lo}} + 2 * (({{key_hi}} - {{key_lo}}) / 3 + 1)"));
+    assert!(quality_rules_trino::extract_split(
+        &bronze,
+        &source,
+        &cols,
+        (&cut, "j"),
+        "id",
+        ("x}}", "y"),
+        2
+    )
+    .is_err());
+    assert_eq!(
+        quality_rules_trino::key_range(&source, "id").unwrap().sql,
+        "SELECT CAST(COALESCE(min(\"id\"), 0) AS BIGINT) AS lo, \
+         CAST(COALESCE(max(\"id\"), 0) AS BIGINT) AS hi FROM \"src_core1\".\"ops\".\"loans\""
+    );
+}

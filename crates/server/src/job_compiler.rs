@@ -48,6 +48,27 @@ fn database(e: impl std::fmt::Display) -> CompileRefused {
     CompileRefused("internal")
 }
 
+/// How many key ranges an extract reads at once (`QD_EXTRACT_RANGES`,
+/// point 9): 1, one scan, unless set; T20 saw no speed-up on one node.
+fn extract_ranges() -> u32 {
+    std::env::var("QD_EXTRACT_RANGES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1)
+}
+
+/// The record key's first column, if the source lists it as an integer
+/// (text keys are never split, point 9).
+fn split_key<'a>(mapping: &Mapping, columns: &'a [(String, String)]) -> Option<&'a str> {
+    let field = mapping.key.first()?;
+    let column = &mapping.fields.get(field)?.value.column;
+    let (name, ty) = columns.iter().find(|(n, _)| n == column)?;
+    let ty = ty.to_ascii_lowercase();
+    let integer = ["tinyint", "smallint", "integer", "bigint"].contains(&ty.as_str())
+        || (ty.starts_with("decimal(") && ty.ends_with(",0)"));
+    integer.then_some(name.as_str())
+}
+
 fn facts(e: FactsError) -> CompileRefused {
     match e {
         FactsError::Refused(class) => CompileRefused(class),
@@ -159,10 +180,12 @@ impl TrinoJobs {
             catalog_commit: Some(&commit),
             ..j
         };
+        let split = split_key(&mapping, &columns).map(|k| (k, extract_ranges()));
         let input = ExtractInput {
             source,
             bronze: lake(bronze_ns, bronze_table),
             columns: &columns,
+            split,
         };
         quality_jobs::extract(&j, &input).map_err(refused)
     }

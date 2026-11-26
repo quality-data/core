@@ -153,8 +153,75 @@ pub fn extract(
     bronze: &TablePath,
     source: &TablePath,
     columns: &[(String, String)],
-    (cut, load): (&Cut, &str),
+    at: (&Cut, &str),
     ranges: Option<(&str, &[Range])>,
+) -> Result<Statement, Error> {
+    let bounds: Option<(&str, Vec<Bound>)> = ranges.map(|(key, rs)| {
+        let b = rs
+            .iter()
+            .map(|(lo, hi)| (lo.to_string(), hi.map(|h| h.to_string())))
+            .collect();
+        (key, b)
+    });
+    bounded(
+        bronze,
+        source,
+        columns,
+        at,
+        bounds.as_ref().map(|(k, b)| (*k, b.as_slice())),
+    )
+}
+
+/// A range's bounds as SQL: from, included, to the next's start, or open.
+type Bound = (String, Option<String>);
+
+/// One load split into `n` contiguous ranges over a numeric `key` whose
+/// smallest and largest values the job runner writes in place of the
+/// bigint tokens `{{lo}}` and `{{hi}}` (read by [`key_range`] in the same
+/// job, amendment A1), so the core needs no value at compile: range `i`
+/// starts at `lo + i * ((hi - lo) / n + 1)`, as [`split`] cuts them.
+pub fn extract_split(
+    bronze: &TablePath,
+    source: &TablePath,
+    columns: &[(String, String)],
+    at: (&Cut, &str),
+    key: &str,
+    (lo, hi): (&str, &str),
+    n: u32,
+) -> Result<Statement, Error> {
+    for t in [lo, hi] {
+        if !quality::bundle::is_statement_id(t) {
+            return Err(Error::BadPlaceholder(t.to_owned()));
+        }
+    }
+    let (lo, hi) = (format!("{{{{{lo}}}}}"), format!("{{{{{hi}}}}}"));
+    let n = n.max(1);
+    let start = |i: u32| format!("{lo} + {i} * (({hi} - {lo}) / {n} + 1)");
+    let bounds: Vec<Bound> = (0..n)
+        .map(|i| (start(i), (i + 1 < n).then(|| start(i + 1))))
+        .collect();
+    bounded(bronze, source, columns, at, Some((key, &bounds)))
+}
+
+/// One row, two bigints `lo` and `hi`: a numeric key's smallest and
+/// largest values in the source table, 0 when it has none.
+pub fn key_range(source: &TablePath, key: &str) -> Result<Statement, Error> {
+    let k = quoted(key)?;
+    Ok(plain(format!(
+        "SELECT CAST(COALESCE(min({k}), 0) AS BIGINT) AS lo, \
+         CAST(COALESCE(max({k}), 0) AS BIGINT) AS hi FROM {}.{}.{}",
+        quoted(&source.catalog)?,
+        quoted(&source.namespace)?,
+        quoted(&source.table)?
+    )))
+}
+
+fn bounded(
+    bronze: &TablePath,
+    source: &TablePath,
+    columns: &[(String, String)],
+    (cut, load): (&Cut, &str),
+    ranges: Option<(&str, &[Bound])>,
 ) -> Result<Statement, Error> {
     let mut names = Vec::new();
     let mut casts = Vec::new();
