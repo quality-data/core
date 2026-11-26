@@ -11,8 +11,10 @@ use quality::bundle::Bundle;
 use quality::bundle_api::{CompileRefused, JobCompiler, JobRequest};
 use quality::catalog::Catalog;
 use quality::job_inputs::{dataset_slas, evaluate_facts, next_run_seq, source_columns, FactsError};
+use quality::mapping::Mapping;
 use quality_jobs::{
-    CompileError, EvaluateInput, Job, PrepareInput, ReferencePin, RetractInput, SlasInput,
+    CompileError, EvaluateInput, ExtractInput, Job, PrepareInput, ReferencePin, RetractInput,
+    SlasInput,
 };
 use quality_rules_trino::{Sla, TablePath};
 
@@ -44,6 +46,13 @@ fn lake(namespace: String, table: String) -> TablePath {
 fn database(e: impl std::fmt::Display) -> CompileRefused {
     tracing::error!("job compile: {e}");
     CompileRefused("internal")
+}
+
+fn facts(e: FactsError) -> CompileRefused {
+    match e {
+        FactsError::Refused(class) => CompileRefused(class),
+        FactsError::Failed(e) => database(e),
+    }
 }
 
 fn refused(e: CompileError) -> CompileRefused {
@@ -97,12 +106,67 @@ impl JobCompiler for TrinoJobs {
             }
             "evaluate" => self.evaluate(j, job).await,
             "prepare" => self.prepare(j).await,
+            "extract" => self.extract(j).await,
             _ => Err(CompileRefused("kind_not_compiled")),
         }
     }
 }
 
 impl TrinoJobs {
+    /// The dataset's mapping at the catalog's `main` now, and its commit.
+    async fn mapping(&self, dataset: &str) -> Result<(Mapping, String), CompileRefused> {
+        let catalog = self
+            .catalog
+            .as_deref()
+            .ok_or(CompileRefused("catalog_not_configured"))?;
+        let snapshot = catalog
+            .snapshot(dataset)
+            .await
+            .map_err(database)?
+            .ok_or(CompileRefused("no_mapping"))?;
+        let mapping =
+            Mapping::parse(&snapshot.mapping).map_err(|_| CompileRefused("mapping_invalid"))?;
+        Ok((mapping, snapshot.commit))
+    }
+
+    /// An extract of the mapped source table into bronze (ruling 67).
+    async fn extract(&self, j: Job<'_>) -> Result<Bundle, CompileRefused> {
+        let dataset = j.dataset.ok_or(CompileRefused("job_incomplete"))?;
+        let (mapping, commit) = self.mapping(dataset).await?;
+        let listed = source_columns(&self.pool, &mapping).await.map_err(facts)?;
+        let mapped: Vec<&str> = mapping
+            .fields
+            .values()
+            .map(|f| f.value.column.as_str())
+            .collect();
+        let columns: Vec<(String, String)> = listed
+            .into_iter()
+            .filter(|(n, _)| mapped.contains(&n.as_str()))
+            .collect();
+        let from = mapping
+            .from
+            .as_ref()
+            .ok_or(CompileRefused("mapping_has_no_source"))?;
+        let (schema, table) = from.value.schema_and_table();
+        let schema = schema.ok_or(CompileRefused("source_table_has_no_schema"))?;
+        let source = TablePath {
+            catalog: format!("src_{}", from.value.source),
+            namespace: schema.to_owned(),
+            table: table.to_owned(),
+        };
+        let (bronze_ns, bronze_table) = quality::layers::bronze(&mapping);
+        let j = Job {
+            catalog_commit: Some(&commit),
+            ..j
+        };
+        let input = ExtractInput {
+            source,
+            bronze: lake(bronze_ns, bronze_table),
+            columns: &columns,
+        };
+        quality_jobs::extract(&j, &input).map_err(refused)
+    }
+
     /// A prepare from the dataset's mapping at the catalog's `main` now.
     async fn prepare(&self, j: Job<'_>) -> Result<Bundle, CompileRefused> {
         let dataset = j.dataset.ok_or(CompileRefused("job_incomplete"))?;

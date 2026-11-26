@@ -31,6 +31,8 @@ pub enum TrinoUser {
     Report,
     /// Prepares and maintains its dataset's bronze and silver.
     Maint,
+    /// Reads its sources and loads its dataset's bronze.
+    Extract,
 }
 
 impl TrinoUser {
@@ -39,6 +41,7 @@ impl TrinoUser {
             Self::Rules => "rules",
             Self::Report => "report",
             Self::Maint => "maint",
+            Self::Extract => "extract",
         }
     }
 }
@@ -49,6 +52,7 @@ fn users_of(kind: &str) -> &'static [TrinoUser] {
     match kind {
         "evaluate" | "rule_test" | "retract" | "slas" => &[TrinoUser::Rules, TrinoUser::Report],
         "prepare" => &[TrinoUser::Maint],
+        "extract" => &[TrinoUser::Extract, TrinoUser::Report],
         _ => &[],
     }
 }
@@ -183,7 +187,8 @@ mod tests {
     #[test]
     fn only_the_kinds_compiled_for_trino_get_users_and_a_token_never_prints() {
         assert_eq!(users_of("evaluate"), [TrinoUser::Rules, TrinoUser::Report]);
-        assert!(users_of("extract").is_empty());
+        assert!(users_of("derive").is_empty());
+        assert_eq!(users_of("extract"), [TrinoUser::Extract, TrinoUser::Report]);
         assert_eq!(users_of("prepare"), [TrinoUser::Maint]);
         let t = TrinoToken {
             access_token: "secret-token".into(),

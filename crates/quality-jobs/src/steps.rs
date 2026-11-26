@@ -67,6 +67,24 @@ impl Steps {
         self.push(id, s.sql, Expect::Done, None);
     }
 
+    /// An `INSERT` that reads the source: the job runner sends the
+    /// source's secrets with it as extra credentials (point 7.5).
+    pub(crate) fn source_insert(&mut self, id: String, s: Statement) {
+        self.push(id, s.sql, Expect::insert(), None);
+        if let Some(last) = self.statements.last_mut() {
+            last.reads_source = true;
+        }
+    }
+
+    /// A read as the job's own user, which may read its own tables (an
+    /// extract's bronze), unlike a rule user.
+    pub(crate) fn job_read(&mut self, id: String, s: Statement, expects: Expect) {
+        self.push(id, s.sql, expects, None);
+        if let Some(last) = self.statements.last_mut() {
+            last.run_as = RunAs::Job;
+        }
+    }
+
     /// A read as the report user, its answer as `expects` says.
     pub(crate) fn read(&mut self, id: String, s: Statement, expects: Expect) {
         self.push(id, s.sql, expects, None);
