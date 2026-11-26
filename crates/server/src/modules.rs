@@ -16,7 +16,7 @@ use infrastructure::lake_policies::SessionPolicies;
 use infrastructure::module_migrations::PgModuleMigrator;
 use infrastructure::standard_lake::StandardLake;
 use infrastructure::{PgAuditRepository, PgLakeAdminKeys, PgPool, SecretBox};
-use quality::bundle_api::{self, BundleServices, NoKindsYet};
+use quality::bundle_api::{self, BundleServices};
 use quality::catalog::Catalog;
 use quality::draft_api::DraftCatalog;
 use quality::job_map::Drafts;
@@ -67,7 +67,9 @@ pub(crate) fn serving(
     let catalog = dolt.clone().map(|d| d as Arc<dyn Catalog>);
     let drafts = dolt.clone().map(|d| d as Arc<dyn Drafts>);
     let review = dolt.map(|d| d as Arc<dyn DraftCatalog>);
-    let bundles = provider.clone().and_then(bundle_services);
+    let bundles = provider
+        .clone()
+        .and_then(|p| bundle_services(p, pool.clone()));
     let quality = match provider {
         Some(p) => QualityModule::serving(
             pool.clone(),
@@ -278,12 +280,12 @@ impl quality::worker_api::MachineTokens for ProviderTokens {
 /// The bundle route's services (decision 0090, point 2): bundles signed
 /// with the provider's ES256 key, asked with machine tokens for the job
 /// runners' audience; `None` without that key.
-fn bundle_services(p: AuthorizationServer) -> Option<BundleServices> {
+fn bundle_services(p: AuthorizationServer, pool: PgPool) -> Option<BundleServices> {
     p.sign_es256(quality::bundle::BUNDLE_TYP, "{}")?;
     Some(BundleServices {
         tokens: Arc::new(BundleTokens(p.clone())),
         signer: Arc::new(ProviderBundles(p)),
-        compiler: Arc::new(NoKindsYet),
+        compiler: Arc::new(crate::job_compiler::TrinoJobs { pool }),
     })
 }
 
