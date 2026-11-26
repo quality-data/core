@@ -20,8 +20,8 @@
 //!     OIDC provider: its keys and the applications that use it.
 //!   * `timezone [set NAME]` — the platform's time zone (decision 0079).
 //!   * `openapi` — print the OpenAPI spec.
-//!   * `quality rules lint | explain | test` — the rule language on local
-//!     files (see [`quality`]).
+//!   * `quality rules lint | explain | tidy` — the rule language on local
+//!     files, against their mappings (see [`quality`]).
 //!   * `quality catalog import` — a dataset's mapping and rules into the
 //!     tenant's catalog (see [`quality_catalog`]).
 
@@ -122,8 +122,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                  timezone         Print the platform's time zone; set NAME: set it \
                  (an IANA name)\n  \
                  openapi          Print the OpenAPI spec (for client generation)\n  \
-                 quality rules lint|explain|test FILE... --data DATASET=PARQUET... [--mapping FILE] \
-                 [--cut DATE] [--type FIELD=email] [--lang es|en]\n  \
+                 quality rules lint|explain FILE... --mapping FILE... [--type FIELD=email] \
+                 [--lang es|en]\n  \
                  quality catalog import --mapping FILE RULES... [--tenant ID] [--author \"Name <email>\"]"
             );
             Err("unknown command".into())
