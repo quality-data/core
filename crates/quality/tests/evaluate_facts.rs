@@ -9,7 +9,7 @@ use chrono::NaiveDate;
 use contracts::ModuleRegistry;
 use infrastructure::module_migrations::PgModuleMigrator;
 use quality::catalog::{Catalog, CatalogSnapshot, DatasetMapping, RulesSource};
-use quality::job_inputs::{evaluate_facts, FactsError};
+use quality::job_inputs::{evaluate_facts, FactsError, ReferenceFacts};
 use quality::module::QualityModule;
 use sqlx::postgres::PgPoolOptions;
 
@@ -17,6 +17,8 @@ const MAPPING: &str = "dataset: loans\nsource: loans\nfields:\n  \
                        Code: { column: code, type: text }\n";
 const RULES: &str = "dataset: loans\nrules:\n  \
                      - { id: R1, field: Code, check: required, severity: major, alert: a }\n";
+const MISSING: &str = "dataset: loans\nreferences:\n  \
+                       o: { dataset: nowhere, key: Code }\nrules: []\n";
 const REFERENCES: &str = "dataset: loans\nreferences:\n  \
                           o: { dataset: offices, key: Code }\nrules: []\n";
 
@@ -41,7 +43,14 @@ impl Catalog for Files {
                 file: "r.yaml".into(),
                 yaml: rules.into(),
             }],
-            others: Vec::<DatasetMapping>::new(),
+            others: if self.0 == REFERENCES {
+                vec![DatasetMapping {
+                    dataset: "offices".into(),
+                    yaml: MAPPING.replace("loans", "offices"),
+                }]
+            } else {
+                Vec::new()
+            },
         }))
     }
 
@@ -114,10 +123,36 @@ async fn an_evaluate_reads_the_catalog_the_cuts_load_and_the_previous_cut() {
         .unwrap();
     assert_eq!((first.load, first.previous), (None, None));
 
+    let refs = evaluate_facts(&app, &Files(REFERENCES), "loans", day("2026-10-31")).await;
+    assert_eq!(
+        refs.unwrap_err(),
+        FactsError::Refused("reference_cut_missing"),
+        "offices has no such cut yet"
+    );
+    sqlx::query(
+        "INSERT INTO quality.cuts (dataset, cut, extract_job, due_at)
+         VALUES ('offices', DATE '2026-10-31', '0b9c6a1e-0000-4000-8000-000000000004', now())",
+    )
+    .execute(&app)
+    .await
+    .unwrap();
+    let f = evaluate_facts(&app, &Files(REFERENCES), "loans", day("2026-10-31"))
+        .await
+        .unwrap();
+    assert_eq!(f.tables["o"].path, ["lake", "offices_silver", "offices"]);
+    assert_eq!(
+        f.references,
+        [ReferenceFacts {
+            name: "o".into(),
+            namespace: "offices_silver".into(),
+            table: "offices".into(),
+            load: Some("0b9c6a1e-0000-4000-8000-000000000004".into()),
+        }]
+    );
     for (catalog, dataset, class) in [
         (Files(RULES), "deposits", "no_mapping"),
         (Files(RULES), "broken", "rules_invalid"),
-        (Files(REFERENCES), "loans", "references_not_compiled"),
+        (Files(MISSING), "loans", "reference_has_no_mapping"),
     ] {
         let refused = evaluate_facts(&app, &catalog, dataset, day("2026-10-31")).await;
         assert_eq!(

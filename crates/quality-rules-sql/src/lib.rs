@@ -39,11 +39,15 @@ pub struct Sql {
 pub type Tables = BTreeMap<String, Table>;
 
 /// One reference's table: its path (catalog, schema, table) and the
-/// condition its records must meet, if the reference declares one.
+/// condition its records must meet, if the reference declares one; on
+/// Trino, `pinned` is the relation read instead of the path: the
+/// referenced silver at its snapshot and cut, as the core wrote it
+/// (decision 0090, ruling 61).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Table {
     pub path: Vec<String>,
     pub filter: Option<Expr>,
+    pub pinned: Option<String>,
 }
 
 /// What a tree may hold that cannot be written safely.

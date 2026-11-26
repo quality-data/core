@@ -11,7 +11,7 @@ use quality::bundle::Bundle;
 use quality::bundle_api::{CompileRefused, JobCompiler, JobRequest};
 use quality::catalog::Catalog;
 use quality::job_inputs::{dataset_slas, evaluate_facts, next_run_seq, FactsError};
-use quality_jobs::{CompileError, EvaluateInput, Job, RetractInput, SlasInput};
+use quality_jobs::{CompileError, EvaluateInput, Job, ReferencePin, RetractInput, SlasInput};
 use quality_rules_trino::{Sla, TablePath};
 
 /// The window method's most distinct values when `QD_EXACT_SORT_LIMIT` is
@@ -125,10 +125,20 @@ impl TrinoJobs {
             ..j
         };
         let previous = facts.previous.map(|d| d.format("%Y-%m-%d").to_string());
+        let references: Vec<ReferencePin<'_>> = facts
+            .references
+            .iter()
+            .map(|r| ReferencePin {
+                name: &r.name,
+                silver: lake(r.namespace.clone(), r.table.clone()),
+                load: r.load.as_deref(),
+            })
+            .collect();
         let input = EvaluateInput {
             mapping: &facts.mapping,
             rules: &facts.rules,
-            tables: &Default::default(),
+            tables: &facts.tables,
+            references: &references,
             silver: lake(silver_ns, silver_table),
             bronze: lake(bronze_ns, bronze_table),
             load: facts.load.as_deref(),

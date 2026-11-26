@@ -29,6 +29,8 @@ pub struct EvaluateInput<'a> {
     pub rules: &'a [Compiled],
     /// The tables the rules' references read, resolved by the core.
     pub tables: &'a Tables,
+    /// Each reference's silver, pinned in the job at this cut (ruling 61).
+    pub references: &'a [ReferencePin<'a>],
     pub silver: TablePath,
     pub bronze: TablePath,
     /// The cut's accepted load (`None`: rows from before loads).
@@ -41,6 +43,17 @@ pub struct EvaluateInput<'a> {
     pub rules_commit: &'a str,
     /// The window method's most distinct values (`QD_EXACT_SORT_LIMIT`).
     pub exact_sort_limit: u64,
+}
+
+/// A referenced dataset's silver, read at the same cut (`as_of`'s only
+/// choice today) and pinned by its own placeholder.
+#[derive(Debug, Clone)]
+pub struct ReferencePin<'a> {
+    /// The reference's name in the rules (a key of `tables`).
+    pub name: &'a str,
+    pub silver: TablePath,
+    /// The referenced cut's accepted load.
+    pub load: Option<&'a str>,
 }
 
 const SILVER_PIN: &str = "silver_snapshot";
@@ -86,12 +99,12 @@ pub fn evaluate(job: &Job<'_>, input: &EvaluateInput<'_>) -> Result<Bundle, Comp
         &started,
         trino::COUNT_COLUMN,
     );
-    let silver = pin(&mut steps, &input.silver, SILVER_PIN, &cut, input.load)?;
-    let bronze = pin(&mut steps, &input.bronze, BRONZE_PIN, &cut, input.load)?;
+    let (silver, bronze, tables) = pins(&mut steps, input, &cut)?;
+    let tables = &tables;
     let icd: Vec<IcdRule> = input
         .rules
         .iter()
-        .map(|r| IcdRule::of(r, input.tables, &cut))
+        .map(|r| IcdRule::of(r, tables, &cut))
         .collect::<Result<_, _>>()?;
     let measured = trino::measured(input.mapping, &icd);
     steps.insert(
@@ -103,7 +116,7 @@ pub fn evaluate(job: &Job<'_>, input: &EvaluateInput<'_>) -> Result<Bundle, Comp
         "rule_results".into(),
         rows(
             "rule_results",
-            trino::rule_results(&silver, input.rules, input.tables, &cut)?,
+            trino::rule_results(&silver, input.rules, tables, &cut)?,
         )?,
     );
     let sources = FieldSources {
@@ -166,6 +179,26 @@ fn bronze_type<'a>(input: &'a EvaluateInput<'_>, column: &str) -> &'a str {
     } else {
         "varchar"
     }
+}
+
+/// The run's pins: its silver and bronze, then each reference's silver,
+/// with the tables the rules read them through.
+fn pins(
+    steps: &mut Steps,
+    input: &EvaluateInput<'_>,
+    cut: &Cut,
+) -> Result<(String, String, Tables), CompileError> {
+    let silver = pin(steps, &input.silver, SILVER_PIN, cut, input.load)?;
+    let bronze = pin(steps, &input.bronze, BRONZE_PIN, cut, input.load)?;
+    let mut tables = input.tables.clone();
+    for (i, r) in input.references.iter().enumerate() {
+        let read = pin(steps, &r.silver, &format!("ref_{i}_snapshot"), cut, r.load)?;
+        let table = tables
+            .get_mut(r.name)
+            .ok_or(CompileError::Incomplete("reference"))?;
+        table.pinned = Some(read);
+    }
+    Ok((silver, bronze, tables))
 }
 
 /// What an earlier attempt of the run left: its counts, its gold rows

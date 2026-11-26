@@ -4,6 +4,9 @@
 
 use chrono::NaiveDate;
 use quality_rules::check::{compile, Compiled};
+use quality_rules::model::RulesFile;
+use quality_rules::sql::{Table, Tables};
+use quality_rules::tree::parse_expr;
 use sqlx::PgPool;
 
 use crate::catalog::Catalog;
@@ -45,10 +48,24 @@ pub struct EvaluateFacts {
     pub commit: String,
     pub mapping: Mapping,
     pub rules: Vec<Compiled>,
+    /// The tables the rules' references read, by reference name.
+    pub tables: Tables,
+    /// Each reference's silver and the load of its same cut (ruling 61).
+    pub references: Vec<ReferenceFacts>,
     /// The cut's extraction, the load its bronze and silver rows carry.
     pub load: Option<String>,
     /// The dataset's latest cut before this one in the index.
     pub previous: Option<NaiveDate>,
+}
+
+/// A referenced dataset's silver table and the load of the cut it is
+/// read at (`as_of`: the same cut).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReferenceFacts {
+    pub name: String,
+    pub namespace: String,
+    pub table: String,
+    pub load: Option<String>,
 }
 
 /// Why an evaluate's facts could not be gathered.
@@ -61,8 +78,9 @@ pub enum FactsError {
 }
 
 /// `dataset`'s facts for an evaluate of `cut`. A rules file that does not
-/// compile against the mapping, or that references another dataset (its
-/// cut is not resolved for Trino yet), refuses the job.
+/// compile against the mapping refuses the job, and so does a reference
+/// to a dataset with no mapping, no silver or no such cut, or a reference
+/// name two files give different datasets.
 pub async fn evaluate_facts(
     pool: &PgPool,
     catalog: &dyn Catalog,
@@ -78,12 +96,12 @@ pub async fn evaluate_facts(
         Mapping::parse(&snapshot.mapping).map_err(|_| FactsError::Refused("mapping_invalid"))?;
     let schema = mapping.schema();
     let mut rules = Vec::new();
+    let mut tables = Tables::new();
+    let mut referenced = std::collections::BTreeMap::new();
     for source in &snapshot.rules {
         let file =
             quality_rules::parse(&source.yaml).map_err(|_| FactsError::Refused("rules_invalid"))?;
-        if !file.references.is_empty() {
-            return Err(FactsError::Refused("references_not_compiled"));
-        }
+        references(&file, &snapshot.others, &mut tables, &mut referenced)?;
         let (compiled, problems) = compile(&file, &schema);
         if !problems.is_empty() {
             return Err(FactsError::Refused("rules_invalid"));
@@ -91,14 +109,19 @@ pub async fn evaluate_facts(
         rules.extend(compiled);
     }
     let failed = |e: sqlx::Error| FactsError::Failed(e.to_string());
-    let load: Option<Option<String>> = sqlx::query_scalar(
-        "SELECT extract_job::text FROM quality.cuts WHERE dataset = $1 AND cut = $2",
-    )
-    .bind(dataset)
-    .bind(cut)
-    .fetch_optional(pool)
-    .await
-    .map_err(failed)?;
+    let load = cut_load(pool, dataset, cut).await?;
+    let mut pins = Vec::new();
+    for (name, (ns, table, other)) in referenced {
+        let load = cut_load(pool, &other, cut)
+            .await?
+            .ok_or(FactsError::Refused("reference_cut_missing"))?;
+        pins.push(ReferenceFacts {
+            name,
+            namespace: ns,
+            table,
+            load,
+        });
+    }
     let previous: Option<NaiveDate> = sqlx::query_scalar(
         "SELECT max(cut) FROM quality.run_summary WHERE dataset = $1 AND cut < $2",
     )
@@ -111,7 +134,68 @@ pub async fn evaluate_facts(
         commit: snapshot.commit,
         mapping,
         rules,
+        tables,
+        references: pins,
         load: load.flatten(),
         previous,
     })
+}
+
+/// The cut's row: `None` if it has none, else its extraction (if any).
+async fn cut_load(
+    pool: &PgPool,
+    dataset: &str,
+    cut: NaiveDate,
+) -> Result<Option<Option<String>>, FactsError> {
+    sqlx::query_scalar("SELECT extract_job::text FROM quality.cuts WHERE dataset = $1 AND cut = $2")
+        .bind(dataset)
+        .bind(cut)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| FactsError::Failed(e.to_string()))
+}
+
+/// A reference's silver namespace and table, and its dataset, by name.
+type Referenced = std::collections::BTreeMap<String, (String, String, String)>;
+
+/// The file's references as tables: the referenced dataset's silver in
+/// the lake catalog, its `where` as the filter.
+fn references(
+    file: &RulesFile,
+    others: &[crate::catalog::DatasetMapping],
+    tables: &mut Tables,
+    referenced: &mut Referenced,
+) -> Result<(), FactsError> {
+    for (name, r) in &file.references {
+        let dataset = &r.dataset.value;
+        let yaml = others
+            .iter()
+            .find(|o| &o.dataset == dataset)
+            .ok_or(FactsError::Refused("reference_has_no_mapping"))?;
+        let other = Mapping::parse(&yaml.yaml)
+            .map_err(|_| FactsError::Refused("reference_has_no_mapping"))?;
+        let (ns, table) =
+            crate::layers::silver(&other).ok_or(FactsError::Refused("reference_has_no_silver"))?;
+        let filter = match &r.filter {
+            Some(w) => {
+                Some(parse_expr(&w.value).map_err(|_| FactsError::Refused("rules_invalid"))?)
+            }
+            None => None,
+        };
+        let t = Table {
+            path: vec!["lake".into(), ns.clone(), table.clone()],
+            filter,
+            pinned: None,
+        };
+        match tables.get(name) {
+            Some(known) if known != &t => {
+                return Err(FactsError::Refused("reference_name_clash"));
+            }
+            _ => {
+                tables.insert(name.clone(), t);
+                referenced.insert(name.clone(), (ns, table, dataset.clone()));
+            }
+        }
+    }
+    Ok(())
 }

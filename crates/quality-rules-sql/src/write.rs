@@ -293,12 +293,15 @@ impl<'a> Writer<'a> {
         let unknown = || Error::UnknownReference(reference.to_string());
         let (name, column) = reference.split_once('.').ok_or_else(unknown)?;
         let table = self.tables.get(name).ok_or_else(unknown)?;
-        let path = table
-            .path
-            .iter()
-            .map(|p| quote_ident(p))
-            .collect::<Result<Vec<_>, _>>()?
-            .join(".");
+        let path = match &table.pinned {
+            Some(relation) => relation.clone(),
+            None => table
+                .path
+                .iter()
+                .map(|p| quote_ident(p))
+                .collect::<Result<Vec<_>, _>>()?
+                .join("."),
+        };
         // A NULL key would make `IN` give NULL, not FALSE, for a value it
         // does not find: the rule would skip what it must fail.
         let key = quote_ident(column)?;

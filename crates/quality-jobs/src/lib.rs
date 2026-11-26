@@ -8,7 +8,7 @@ mod gold;
 mod rule_test;
 mod steps;
 
-pub use evaluate::{evaluate, EvaluateInput};
+pub use evaluate::{evaluate, EvaluateInput, ReferencePin};
 pub use gold::{retract, slas, RetractInput, SlasInput};
 pub use rule_test::{rule_test, RuleTestInput, COUNTS};
 

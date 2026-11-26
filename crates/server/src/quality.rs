@@ -167,7 +167,14 @@ fn tables(file: &RulesFile, mappings: &BTreeMap<String, Mapping>) -> Tables {
                 None => None,
             };
             let path = vec![r.dataset.value.clone()];
-            Some((name.clone(), Table { path, filter }))
+            Some((
+                name.clone(),
+                Table {
+                    path,
+                    filter,
+                    pinned: None,
+                },
+            ))
         })
         .collect()
 }

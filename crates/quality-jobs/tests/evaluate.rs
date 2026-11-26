@@ -76,6 +76,7 @@ fn bundle(previous: Option<&str>) -> Result<Bundle, CompileError> {
         mapping: &mapping,
         rules: &rules,
         tables: &Tables::new(),
+        references: &[],
         silver: path("loans_silver"),
         bronze: path("loans_bronze"),
         load: Some("load-3"),
@@ -204,6 +205,7 @@ fn a_missing_or_bad_cut_is_refused() {
         mapping: &mapping,
         rules: &[],
         tables: &Tables::new(),
+        references: &[],
         silver: path("loans_silver"),
         bronze: path("loans_bronze"),
         load: None,
@@ -220,4 +222,63 @@ fn a_missing_or_bad_cut_is_refused() {
         evaluate(&job(Some("2026-10-31")), &input),
         Err(CompileError::Statement(_))
     ));
+}
+
+/// Ruling 61: a referenced dataset's silver is pinned by its own
+/// placeholder at the same cut and the rule reads that, not its path.
+#[test]
+fn a_reference_is_read_pinned_at_the_cut() {
+    use quality_jobs::ReferencePin;
+    use quality_rules::sql::Table;
+    let yaml = "dataset: loans\nreferences:\n  o: { dataset: offices, key: Code }\nrules:\n  \
+                - { id: O1, check: expression, dimension: validity, severity: minor, alert: a, \
+                fails: \"NOT in_reference(Type, 'o.Code')\" }\n";
+    let mapping = Mapping::parse(MAPPING).unwrap();
+    let (rules, problems) = compile(&quality_rules::parse(yaml).unwrap(), &mapping.schema());
+    assert!(problems.is_empty(), "{problems:?}");
+    let tables = Tables::from([(
+        "o".to_string(),
+        Table {
+            path: vec!["offices".into()],
+            filter: None,
+            pinned: None,
+        },
+    )]);
+    let types = BTreeMap::new();
+    let references = [ReferencePin {
+        name: "o",
+        silver: path("offices_silver"),
+        load: Some("load-9"),
+    }];
+    let input = EvaluateInput {
+        mapping: &mapping,
+        rules: &rules,
+        tables: &tables,
+        references: &references,
+        silver: path("loans_silver"),
+        bronze: path("loans_bronze"),
+        load: None,
+        previous: None,
+        bronze_types: &types,
+        rules_commit: "abc",
+        exact_sort_limit: 10,
+    };
+    let b = evaluate(&job(Some("2026-10-31")), &input).unwrap();
+    assert!(b.well_formed());
+    assert!(b.placeholders.iter().any(|p| p.name == "ref_0_snapshot"));
+    let scratch = b.statements.iter().find(|s| s.id == "scratch").unwrap();
+    assert!(scratch.sql.contains(
+        "FROM (SELECT * FROM \"lake\".\"offices_silver\".\"loans\" FOR VERSION AS OF {{ref_0_snapshot}} \
+         WHERE cut = DATE '2026-10-31' AND _load = 'load-9') WHERE \"Code\" IS NOT NULL"
+    ), "{}", scratch.sql);
+    let mut unknown = references.to_vec();
+    unknown[0].name = "x";
+    let input = EvaluateInput {
+        references: &unknown,
+        ..input
+    };
+    assert_eq!(
+        evaluate(&job(Some("2026-10-31")), &input),
+        Err(CompileError::Incomplete("reference"))
+    );
 }

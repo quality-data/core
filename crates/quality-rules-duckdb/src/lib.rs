@@ -212,7 +212,14 @@ impl Runner {
                     None => None,
                 };
                 let path = vec![r.dataset.value.clone()];
-                Some((name.clone(), Table { path, filter }))
+                Some((
+                    name.clone(),
+                    Table {
+                        path,
+                        filter,
+                        pinned: None,
+                    },
+                ))
             })
             .collect()
     }
