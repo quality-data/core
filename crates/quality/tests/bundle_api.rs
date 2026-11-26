@@ -64,12 +64,14 @@ impl JobCompiler for Compiler {
             run_seq: Some(n as u64),
             catalog_commit: Some("c0ffee".into()),
             compiler_version: "test".into(),
+            placeholders: vec![],
             statements: vec![BundleStatement {
                 id: "rules".into(),
                 sql: format!("INSERT INTO t SELECT {n}"),
                 expects: Expect::insert(),
                 run_as: RunAs::Job,
                 reads_source: false,
+                only_if_rows: None,
             }],
         })
     }
