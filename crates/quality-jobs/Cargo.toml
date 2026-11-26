@@ -15,4 +15,5 @@ workspace = true
 # I/O and no DuckDB. The server gathers its input and signs the result.
 [dependencies]
 quality.workspace = true
+quality-rules.workspace = true
 quality-rules-trino.workspace = true

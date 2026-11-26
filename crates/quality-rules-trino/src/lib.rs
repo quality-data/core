@@ -43,14 +43,14 @@ pub use job_counts::{
     count_into, count_read, delete_run_counts, run_counts, COUNT_COLUMN, JOB_COUNTS,
 };
 pub use loads::{
-    accepted, create_silver, delete_load, derive_silver, loads_of_cut, migrate_to_loads, Accepted,
-    LOAD,
+    accepted, accepted_in, create_silver, delete_load, derive_silver, loads_of_cut,
+    migrate_to_loads, Accepted, LOAD,
 };
 pub use profile::{
     bronze_profile, field_profile, recency, shape_of, RECENCY_BANDS, RECENCY_DAYS, SHAPE_LEN,
 };
 pub use quality_rules_sql::{Cut, ShapeKind};
-pub use read::{current_snapshot, pinned, typed_select, Pinned, TablePath};
+pub use read::{current_snapshot, pinned, pinned_by, typed_select, Pinned, TablePath};
 pub use retract::{
     dataset_rows, delete_dataset, delete_older_slas, delete_run_slas, insert_slas, older_slas,
     run_slas, tombstone, Sla,
@@ -74,6 +74,8 @@ pub enum Error {
     Rule(String, quality_rules_sql::Error),
     /// A field the mapping does not have.
     UnknownField(String),
+    /// A placeholder name a job runner would not take (`[a-z0-9_]`).
+    BadPlaceholder(String),
 }
 
 impl From<quality_rules_sql::Error> for Error {

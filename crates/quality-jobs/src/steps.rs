@@ -1,8 +1,12 @@
 //! Building a bundle's statements in order: reads, counts, writes and the
 //! deletes guarded by a count (`only_if_rows`, amendment A1).
 
-use quality::bundle::{BundleStatement, Expect, OnlyIfRows, Placeholder, RunAs};
-use quality_rules_trino::Statement;
+use quality::bundle::{
+    BundleStatement, Expect, OnlyIfRows, Placeholder, PlaceholderFrom, PlaceholderType, RunAs,
+};
+use quality_rules_trino::{self as trino, Statement, COUNT_COLUMN};
+
+use crate::CompileError;
 
 /// The column Trino names an unaliased `count(*)`.
 const COUNT: &str = "_col0";
@@ -45,5 +49,65 @@ impl Steps {
         };
         self.push(rows.clone(), count.sql, expects, None);
         self.push(id.into(), delete.sql, Expect::delete(), Some(rows));
+    }
+
+    /// An `INSERT` that runs only when the count read `after` showed rows.
+    pub(crate) fn insert_after(&mut self, id: String, s: Statement, after: String) {
+        self.push(id, s.sql, Expect::insert(), Some(after));
+    }
+
+    /// A `DELETE` that runs only when the count read `after` showed rows.
+    pub(crate) fn delete_after(&mut self, id: String, s: Statement, after: String) {
+        self.push(id, s.sql, Expect::delete(), Some(after));
+    }
+
+    /// A read of one row of one `bigint` named `column`, as the report user.
+    pub(crate) fn read_one(&mut self, id: String, s: Statement, column: &str) {
+        let expects = Expect::Rows {
+            columns: vec![(column.into(), "bigint".into())],
+            max_rows: 1,
+        };
+        self.push(id, s.sql, expects, None);
+    }
+
+    /// `{{name}}`, filled from `column` of the one-row answer of `statement`.
+    pub(crate) fn placeholder(
+        &mut self,
+        name: &str,
+        ty: PlaceholderType,
+        statement: &str,
+        column: &str,
+    ) {
+        self.placeholders.push(Placeholder {
+            name: name.into(),
+            ty,
+            from: PlaceholderFrom {
+                statement: statement.into(),
+                column: column.into(),
+            },
+        });
+    }
+
+    /// A count the job's own user may not read back (ruling 53): written
+    /// into gold's `job_counts` as `<id>_count`, read back as the report
+    /// user as `<id>_rows`, whose id it returns.
+    pub(crate) fn bare_count(
+        &mut self,
+        dataset: &str,
+        run: &str,
+        id: &str,
+        count: &Statement,
+    ) -> Result<String, CompileError> {
+        let read = format!("{id}_rows");
+        self.insert(
+            format!("{id}_count"),
+            trino::count_into(dataset, run, id, count)?,
+        );
+        self.read_one(
+            read.clone(),
+            trino::count_read(dataset, run, id)?,
+            COUNT_COLUMN,
+        );
+        Ok(read)
     }
 }

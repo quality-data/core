@@ -3145,6 +3145,7 @@ name = "quality-jobs"
 version = "0.1.0"
 dependencies = [
  "quality",
+ "quality-rules",
  "quality-rules-trino",
 ]
 

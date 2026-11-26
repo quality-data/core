@@ -3,9 +3,11 @@
 //! a job runner submits. Pure: the server gathers the input (PostgreSQL,
 //! the catalog, the sequence) and signs what this returns.
 
+mod evaluate;
 mod gold;
 mod steps;
 
+pub use evaluate::{evaluate, EvaluateInput};
 pub use gold::{retract, slas, RetractInput, SlasInput};
 
 use quality::bundle::Bundle;

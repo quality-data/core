@@ -40,13 +40,17 @@ fn table(t: &TablePath) -> Result<String, Error> {
 
 /// The accepted load of a cut at its recorded snapshot, as a relation.
 pub fn accepted(p: &Pinned, a: &Accepted<'_>) -> Result<String, Error> {
+    accepted_in(&pinned(p)?, a)
+}
+
+/// The accepted load of a cut in `from`, a pinned table (`pinned_by`).
+pub fn accepted_in(from: &str, a: &Accepted<'_>) -> Result<String, Error> {
     let load = match a.load {
         Some(l) => format!("{LOAD} = {}", quote_text(l)?),
         None => format!("{LOAD} IS NULL"),
     };
     Ok(format!(
-        "(SELECT * FROM {} WHERE cut = {} AND {load})",
-        pinned(p)?,
+        "(SELECT * FROM {from} WHERE cut = {} AND {load})",
         a.cut.literal()
     ))
 }
