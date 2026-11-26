@@ -16,8 +16,8 @@ use quality::job_inputs::{
 use quality::manifest::ManifestStore;
 use quality::mapping::Mapping;
 use quality_jobs::{
-    AtSnapshots, CompileError, EvaluateInput, ExtractInput, Job, PrepareInput, ReferencePin,
-    RetractInput, SlasInput,
+    AtSnapshots, CompileError, EvaluateInput, ExtractInput, Job, PrepareInput, RecordsInput,
+    ReferencePin, RetractInput, SlasInput,
 };
 use quality_rules_trino::{Sla, TablePath};
 
@@ -135,6 +135,7 @@ impl JobCompiler for TrinoJobs {
             "prepare" => self.prepare(j).await,
             "extract" => self.extract(j).await,
             "tables" => self.tables(j, job).await,
+            "records" => self.records(j, job).await,
             _ => Err(CompileRefused("kind_not_compiled")),
         }
     }
@@ -170,6 +171,29 @@ impl TrinoJobs {
             .ok_or(CompileRefused("no_source"))?;
         let system = quality::source_tables::system_schemas(&driver);
         quality_jobs::tables(&j, source, system).map_err(refused)
+    }
+
+    /// A page of a source table's records (ruling 79), as its job asked.
+    async fn records(&self, j: Job<'_>, job: &JobRequest) -> Result<Bundle, CompileRefused> {
+        let r = quality::records_run::job_of(&self.pool, j.run)
+            .await
+            .map_err(facts)?;
+        if job.source.as_deref() != Some(r.source.as_str()) {
+            return Err(CompileRefused("job_incomplete"));
+        }
+        let (schema, table) = r
+            .ask
+            .schema_and_table()
+            .map_err(|_| CompileRefused("page_invalid"))?;
+        let input = RecordsInput {
+            source: &r.source,
+            schema,
+            table,
+            columns: &r.columns,
+            order: r.ask.order.as_deref().map(|o| (o, r.ask.descending)),
+            page: r.ask.page,
+        };
+        quality_jobs::records(&j, &input).map_err(refused)
     }
 
     /// An extract of the mapped source table into bronze (ruling 67).

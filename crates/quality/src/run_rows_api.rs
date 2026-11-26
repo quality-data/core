@@ -40,6 +40,7 @@ impl std::fmt::Debug for RunRows {
 pub(crate) struct ValuesRun {
     pub(crate) run: String,
     pub(crate) kind: String,
+    pub(crate) bundle: Bundle,
 }
 
 #[derive(Clone)]
@@ -122,7 +123,11 @@ async fn rows(
         .map_err(|_| internal("the pinned bundle does not verify"))?;
     values_fit(&b, &r.statement, &r.rows)
         .map_err(|why| refused(StatusCode::UNPROCESSABLE_ENTITY, why))?;
-    let taken = ValuesRun { run, kind };
+    let taken = ValuesRun {
+        run,
+        kind,
+        bundle: b,
+    };
     hand_over(&api.pool, &taken, &r).await?;
     tracing::info!(
         run = taken.run,
@@ -136,7 +141,10 @@ async fn rows(
 
 /// The rows to the run's kind, which keeps them as it keeps a worker's
 /// today. A kind that reads no values takes none.
-async fn hand_over(_pool: &PgPool, run: &ValuesRun, _rows: &RunRows) -> Result<(), Refusal> {
+async fn hand_over(pool: &PgPool, run: &ValuesRun, rows: &RunRows) -> Result<(), Refusal> {
+    if run.kind == crate::records_api::KIND {
+        return crate::records_run::take(pool, run, rows).await;
+    }
     tracing::warn!(
         run = run.run,
         kind = run.kind,

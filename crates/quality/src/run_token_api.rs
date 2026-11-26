@@ -33,7 +33,8 @@ pub enum TrinoUser {
     Maint,
     /// Reads its sources and loads its dataset's bronze.
     Extract,
-    /// Reads one source's catalog: its listing (a `tables` job).
+    /// Reads one source's catalog: its listing (a `tables` job) or a page
+    /// of a table's records (a `records` job).
     Source,
 }
 
@@ -58,7 +59,7 @@ fn users_of(kind: &str) -> &'static [TrinoUser] {
         }
         "prepare" => &[TrinoUser::Maint],
         "extract" => &[TrinoUser::Extract, TrinoUser::Report],
-        "tables" => &[TrinoUser::Source],
+        "tables" | "records" => &[TrinoUser::Source],
         _ => &[],
     }
 }

@@ -25,6 +25,7 @@ mod read;
 mod retract;
 mod rules;
 mod scratch;
+mod values;
 
 pub use distribution::{outliers, variable_percentiles, Method};
 pub use extract::{
@@ -59,6 +60,7 @@ pub use retract::{
 };
 pub use rules::{rule_counts, rule_results};
 pub use scratch::{cells, entities, groups, means, scratch_delete, scratch_rows};
+pub use values::source_page;
 
 use quality_rules_sql::quote_ident;
 

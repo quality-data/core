@@ -265,3 +265,83 @@ async fn values_never_ride_in_the_report_and_stop_once_it_is_in() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }
+
+/// Ruling 79: a `records` run's page, posted as values, is kept as its
+/// job's page, masked on a read as a worker's is.
+#[tokio::test]
+async fn a_records_runs_page_is_kept_for_its_job() {
+    let mut b = bundle("records");
+    b.statements.truncate(1);
+    let (db, app, router) = fixture(&b).await;
+    for sql in [
+        "ALTER TABLE quality.jobs OWNER TO app",
+        "ALTER TABLE quality.sources OWNER TO app",
+        "ALTER TABLE quality.source_tables OWNER TO app",
+        "ALTER TABLE quality.source_records OWNER TO app",
+    ] {
+        sqlx::query(sql).execute(&db.pool).await.unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO quality.sources (name, driver, secrets) VALUES ('core', 'postgres', 'x')",
+    )
+    .execute(&app)
+    .await
+    .unwrap();
+    let tables = json!([{ "schema": "public", "name": "loans", "columns": [
+        { "name": "name", "data_type": "varchar" },
+        { "name": "amount", "data_type": "decimal(12,2)" }]}]);
+    sqlx::query(
+        "INSERT INTO quality.source_tables (source, job, asked_at, tables)
+         VALUES ('core', gen_random_uuid(), now(), $1)",
+    )
+    .bind(&tables)
+    .execute(&app)
+    .await
+    .unwrap();
+    let parameters = json!({ "table": "public.loans", "order": "amount", "descending": true,
+        "page": 0, "source": "core", "by": "someone" });
+    sqlx::query("INSERT INTO quality.jobs (id, kind, parameters) VALUES ($1::uuid, 'records', $2)")
+        .bind(RUN)
+        .bind(&parameters)
+        .execute(&app)
+        .await
+        .unwrap();
+
+    let job = quality::records_run::job_of(&app, RUN).await.unwrap();
+    assert_eq!(job.source, "core");
+    assert_eq!(job.columns, ["name", "amount"]);
+    assert_eq!(job.ask.order.as_deref(), Some("amount"));
+
+    let rows = json!({ "statement": "page", "rows": [["Name Example", "10.00"], [null, "2.50"]] });
+    assert_eq!(
+        post(&router, "rows", Some("token-runner"), &rows).await.0,
+        StatusCode::NO_CONTENT
+    );
+    let page: Value =
+        sqlx::query_scalar("SELECT page FROM quality.source_records WHERE job = $1::uuid")
+            .bind(RUN)
+            .fetch_one(&app)
+            .await
+            .unwrap();
+    assert_eq!(
+        page,
+        json!({ "source": "core", "table": "public.loans", "columns": ["name", "amount"],
+            "rows": [["Name Example", "10.00"], [null, "2.50"]], "more": false })
+    );
+
+    let gone = json!({ "table": "public.gone", "source": "core" });
+    sqlx::query("UPDATE quality.jobs SET parameters = $1 WHERE id = $2::uuid")
+        .bind(&gone)
+        .bind(RUN)
+        .execute(&app)
+        .await
+        .unwrap();
+    assert!(matches!(
+        quality::records_run::job_of(&app, RUN).await,
+        Err(quality::job_inputs::FactsError::Refused("table_not_listed"))
+    ));
+    assert!(matches!(
+        quality::records_run::job_of(&app, "0b9c6a1e-0000-4000-8000-000000000099").await,
+        Err(quality::job_inputs::FactsError::Refused("no_job"))
+    ));
+}

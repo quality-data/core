@@ -15,7 +15,7 @@ pub struct TablePath {
 }
 
 impl TablePath {
-    fn sql(&self) -> Result<String, Error> {
+    pub(crate) fn sql(&self) -> Result<String, Error> {
         Ok(format!(
             "{}.{}.{}",
             quoted(&self.catalog)?,
