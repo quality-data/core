@@ -10,7 +10,9 @@ mod prepare;
 mod rule_test;
 mod steps;
 
-pub use evaluate::{evaluate, AtSnapshots, EvaluateInput, ReferencePin};
+pub use evaluate::{
+    evaluate, AtSnapshots, EvaluateInput, ReferencePin, INDEX_RULES, INDEX_SUMMARY,
+};
 pub use extract::{extract, ExtractInput};
 pub use gold::{retract, slas, RetractInput, SlasInput};
 pub use prepare::{prepare, PrepareInput};
