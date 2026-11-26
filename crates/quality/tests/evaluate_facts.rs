@@ -162,3 +162,80 @@ async fn an_evaluate_reads_the_catalog_the_cuts_load_and_the_previous_cut() {
         );
     }
 }
+
+/// Ruling 68: a prepare's or an extract's columns are those the source's
+/// latest listing gives its mapped table, with Trino's type names.
+#[tokio::test]
+async fn the_mapped_tables_columns_come_from_the_sources_listing() {
+    use quality::job_inputs::source_columns;
+    use quality::mapping::Mapping;
+    let db = testkit::spawn_test_db().await;
+    sqlx::query("CREATE ROLE qd_queue LOGIN PASSWORD 'queue'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let mut migrator = PgModuleMigrator::load(&db.pool).await.unwrap();
+    ModuleRegistry::new()
+        .register(QualityModule::default())
+        .run_migrations(&mut migrator)
+        .unwrap();
+    migrator.run(&db.pool).await.unwrap();
+    let options = testkit::app_role(&db).await;
+    for sql in [
+        "GRANT USAGE ON SCHEMA quality TO app",
+        "ALTER TABLE quality.sources OWNER TO app",
+        "ALTER TABLE quality.source_tables OWNER TO app",
+    ] {
+        sqlx::query(sql).execute(&db.pool).await.unwrap();
+    }
+    let app = PgPoolOptions::new()
+        .max_connections(2)
+        .connect_with(options)
+        .await
+        .unwrap();
+    let mapping = |from: &str| {
+        Mapping::parse(&format!(
+            "dataset: loans\nsource: loans\n{from}fields:\n  Id: {{ column: loan_id, type: text }}\n"
+        ))
+        .unwrap()
+    };
+    let mapped = mapping("from: { source: core, table: public.loans }\n");
+    assert_eq!(
+        source_columns(&app, &mapping("")).await,
+        Err(FactsError::Refused("mapping_has_no_source"))
+    );
+    sqlx::query(
+        "INSERT INTO quality.sources (name, driver, secrets) VALUES ('core', 'postgres', 'x')",
+    )
+    .execute(&app)
+    .await
+    .unwrap();
+    assert_eq!(
+        source_columns(&app, &mapped).await,
+        Err(FactsError::Refused("source_not_listed"))
+    );
+    sqlx::query(
+        "INSERT INTO quality.source_tables (source, job, asked_at, tables) VALUES ('core', \
+         gen_random_uuid(), now(), '[{\"schema\": \"public\", \"name\": \"loans\", \"columns\": \
+         [{\"name\": \"loan_id\", \"data_type\": \"varchar(20)\"}, \
+          {\"name\": \"amount\", \"data_type\": \"decimal(12,2)\"}]}]'::jsonb)",
+    )
+    .execute(&app)
+    .await
+    .unwrap();
+    assert_eq!(
+        source_columns(&app, &mapped).await.unwrap(),
+        [
+            ("loan_id".to_string(), "varchar(20)".to_string()),
+            ("amount".to_string(), "decimal(12,2)".to_string())
+        ]
+    );
+    assert_eq!(
+        source_columns(
+            &app,
+            &mapping("from: { source: core, table: other.loans }\n")
+        )
+        .await,
+        Err(FactsError::Refused("source_table_not_listed"))
+    );
+}

@@ -10,8 +10,10 @@ use infrastructure::PgPool;
 use quality::bundle::Bundle;
 use quality::bundle_api::{CompileRefused, JobCompiler, JobRequest};
 use quality::catalog::Catalog;
-use quality::job_inputs::{dataset_slas, evaluate_facts, next_run_seq, FactsError};
-use quality_jobs::{CompileError, EvaluateInput, Job, ReferencePin, RetractInput, SlasInput};
+use quality::job_inputs::{dataset_slas, evaluate_facts, next_run_seq, source_columns, FactsError};
+use quality_jobs::{
+    CompileError, EvaluateInput, Job, PrepareInput, ReferencePin, RetractInput, SlasInput,
+};
 use quality_rules_trino::{Sla, TablePath};
 
 /// The window method's most distinct values when `QD_EXACT_SORT_LIMIT` is
@@ -94,12 +96,49 @@ impl JobCompiler for TrinoJobs {
                 quality_jobs::slas(&j, &SlasInput { slas }).map_err(refused)
             }
             "evaluate" => self.evaluate(j, job).await,
+            "prepare" => self.prepare(j).await,
             _ => Err(CompileRefused("kind_not_compiled")),
         }
     }
 }
 
 impl TrinoJobs {
+    /// A prepare from the dataset's mapping at the catalog's `main` now.
+    async fn prepare(&self, j: Job<'_>) -> Result<Bundle, CompileRefused> {
+        let dataset = j.dataset.ok_or(CompileRefused("job_incomplete"))?;
+        let catalog = self
+            .catalog
+            .as_deref()
+            .ok_or(CompileRefused("catalog_not_configured"))?;
+        let snapshot = catalog
+            .snapshot(dataset)
+            .await
+            .map_err(database)?
+            .ok_or(CompileRefused("no_mapping"))?;
+        let mapping = quality::mapping::Mapping::parse(&snapshot.mapping)
+            .map_err(|_| CompileRefused("mapping_invalid"))?;
+        let (bronze_ns, bronze_table) = quality::layers::bronze(&mapping);
+        let (silver_ns, silver_table) =
+            quality::layers::silver(&mapping).ok_or(CompileRefused("no_silver"))?;
+        let columns = source_columns(&self.pool, &mapping)
+            .await
+            .map_err(|e| match e {
+                FactsError::Refused(class) => CompileRefused(class),
+                FactsError::Failed(e) => database(e),
+            })?;
+        let j = Job {
+            catalog_commit: Some(&snapshot.commit),
+            ..j
+        };
+        let input = PrepareInput {
+            mapping: &mapping,
+            bronze: lake(bronze_ns, bronze_table),
+            silver: lake(silver_ns, silver_table),
+            source_columns: &columns,
+        };
+        quality_jobs::prepare(&j, &input).map_err(refused)
+    }
+
     /// An evaluate from the catalog's `main` now, with a new `run_seq`.
     async fn evaluate(&self, j: Job<'_>, job: &JobRequest) -> Result<Bundle, CompileRefused> {
         let (Some(dataset), Some(cut)) = (j.dataset, job.cut) else {

@@ -10,6 +10,7 @@ use quality::layers::{SourceClass, DERIVED_BY, ENTITY_KEY, KEY_NORMALIZED};
 use quality::mapping::{FieldRole, Kind, Mapping};
 use quality_rules_sql::{quote_text, Cut};
 
+use crate::extract::bronze_type;
 use crate::icd::{key, with_role};
 use crate::read::{pinned, typed_select, Pinned, TablePath};
 use crate::{quoted, Error, Statement};
@@ -92,6 +93,55 @@ pub fn create_silver(t: &TablePath, mapping: &Mapping) -> Result<Statement, Erro
         table(t)?,
         defs.join(", ")
     )))
+}
+
+/// A `prepare` job's statements (decision 0090, rulings 66 and 68): the
+/// dataset's bronze table (each mapped column, typed by `bronze_type` of
+/// the type Trino lists it with in `source_columns`) and its silver table,
+/// each created if missing, then every column added if missing, so a
+/// mapping whose columns changed is prepared again. Each can run twice.
+pub fn prepare(
+    bronze: &TablePath,
+    silver: &TablePath,
+    mapping: &Mapping,
+    source_columns: &[(String, String)],
+) -> Result<Vec<Statement>, Error> {
+    let mut bronze_cols: Vec<(String, String)> = Vec::new();
+    for f in mapping.fields.values() {
+        let c = &f.value.column;
+        if bronze_cols.iter().any(|(n, _)| n == c) {
+            continue;
+        }
+        let (_, ty) = source_columns
+            .iter()
+            .find(|(n, _)| n == c)
+            .ok_or_else(|| Error::UnknownField(c.clone()))?;
+        bronze_cols.push((c.clone(), bronze_type(ty).0));
+    }
+    let silver_cols: Vec<(String, String)> = silver_columns(mapping)
+        .into_iter()
+        .map(|(n, t)| (n, t.to_string()))
+        .collect();
+    let mut out = Vec::new();
+    for (t, cols) in [(bronze, bronze_cols), (silver, silver_cols)] {
+        let mut defs = Vec::new();
+        for (n, ty) in &cols {
+            defs.push(format!("{} {ty}", quoted(n)?));
+        }
+        defs.push(format!("cut DATE, {LOAD} VARCHAR"));
+        let at = table(t)?;
+        out.push(plain(format!(
+            "CREATE TABLE IF NOT EXISTS {at} ({}) WITH (partitioning = ARRAY['cut', '{LOAD}'])",
+            defs.join(", ")
+        )));
+        for (n, ty) in &cols {
+            out.push(plain(format!(
+                "ALTER TABLE {at} ADD COLUMN IF NOT EXISTS {} {ty}",
+                quoted(n)?
+            )));
+        }
+    }
+    Ok(out)
 }
 
 /// The silver derivation of one bronze load: every field typed as mapped,

@@ -57,6 +57,7 @@ impl TrinoTokens for ProviderTrinoTokens {
         let kind = match user {
             TrinoUser::Rules => JobUserKind::Rules,
             TrinoUser::Report => JobUserKind::Report,
+            TrinoUser::Maint => JobUserKind::Maint,
         };
         let subject = JobSubject::new(&job.to_string(), kind, dataset)
             .map_err(|_| "not a job's Trino user".to_string())?;

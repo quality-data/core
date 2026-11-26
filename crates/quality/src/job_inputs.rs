@@ -199,3 +199,34 @@ fn references(
     }
     Ok(())
 }
+
+/// The mapped table's columns and their types as the source's latest
+/// listing gives them (decision 0090, ruling 68), for a prepare or an
+/// extract. A mapping with no `from`, a source never listed, or a table
+/// not in its listing refuses the job.
+pub async fn source_columns(
+    pool: &PgPool,
+    mapping: &Mapping,
+) -> Result<Vec<(String, String)>, FactsError> {
+    let from = mapping
+        .from
+        .as_ref()
+        .ok_or(FactsError::Refused("mapping_has_no_source"))?;
+    let (schema, table) = from.value.schema_and_table();
+    let tables: Option<sqlx::types::Json<Vec<crate::source_tables::SourceTable>>> =
+        sqlx::query_scalar("SELECT tables FROM quality.source_tables WHERE source = $1")
+            .bind(&from.value.source)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| FactsError::Failed(e.to_string()))?;
+    let tables = tables.ok_or(FactsError::Refused("source_not_listed"))?.0;
+    let found = tables
+        .into_iter()
+        .find(|t| t.name == table && schema.is_none_or(|s| s == t.schema))
+        .ok_or(FactsError::Refused("source_table_not_listed"))?;
+    Ok(found
+        .columns
+        .into_iter()
+        .map(|c| (c.name, c.data_type))
+        .collect())
+}

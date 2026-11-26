@@ -61,6 +61,12 @@ impl Steps {
         self.push(id, s.sql, Expect::delete(), Some(after));
     }
 
+    /// A statement that answers only success (`CREATE`, `ALTER`), as the
+    /// job's own user.
+    pub(crate) fn done(&mut self, id: String, s: Statement) {
+        self.push(id, s.sql, Expect::Done, None);
+    }
+
     /// A read as the report user, its answer as `expects` says.
     pub(crate) fn read(&mut self, id: String, s: Statement, expects: Expect) {
         self.push(id, s.sql, expects, None);

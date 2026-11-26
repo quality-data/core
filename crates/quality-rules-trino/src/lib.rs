@@ -45,7 +45,7 @@ pub use job_counts::{
 };
 pub use loads::{
     accepted, accepted_in, create_silver, delete_load, derive_silver, loads_of_cut,
-    migrate_to_loads, Accepted, LOAD,
+    migrate_to_loads, prepare, Accepted, LOAD,
 };
 pub use profile::{
     bronze_profile, field_profile, recency, shape_of, RECENCY_BANDS, RECENCY_DAYS, SHAPE_LEN,

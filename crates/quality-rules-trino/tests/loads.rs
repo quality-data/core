@@ -3,8 +3,8 @@
 use quality::layers::SourceClass;
 use quality::mapping::Mapping;
 use quality_rules_trino::{
-    accepted, create_silver, delete_load, derive_silver, loads_of_cut, migrate_to_loads, Accepted,
-    Cut, Pinned, TablePath,
+    accepted, create_silver, delete_load, derive_silver, loads_of_cut, migrate_to_loads, prepare,
+    Accepted, Cut, Pinned, TablePath,
 };
 
 fn cut() -> Cut {
@@ -103,4 +103,48 @@ fn an_old_table_moves_to_loads_and_a_superseded_load_goes_by_partition() {
         .unwrap()
         .sql
         .ends_with("WHERE cut = DATE '2026-10-31' AND _load = 'job-1'"));
+}
+
+/// Rulings 66 and 68: a `prepare` job creates bronze (typed as Trino lists
+/// the source) and silver if missing, then adds any mapped column they
+/// lack, so a changed mapping prepares again.
+#[test]
+fn prepare_creates_both_tables_then_adds_missing_columns() {
+    let m = Mapping::parse(MAPPING).unwrap();
+    let listed = [
+        ("doc".to_string(), "varchar(20)".to_string()),
+        ("balance".to_string(), "decimal(12,2)".to_string()),
+        ("other".to_string(), "tinyint".to_string()),
+    ];
+    assert!(
+        prepare(&path("b"), &path("s"), &m, &listed[..1]).is_err(),
+        "balance not listed"
+    );
+    let steps: Vec<String> = prepare(
+        &path("clients_bronze"),
+        &path("clients_silver"),
+        &m,
+        &listed,
+    )
+    .unwrap()
+    .into_iter()
+    .map(|s| s.sql)
+    .collect();
+    assert_eq!(
+        steps[0],
+        "CREATE TABLE IF NOT EXISTS \"lake\".\"clients_bronze\".\"clients_2026\" \
+         (\"doc\" varchar(20), \"balance\" decimal(12,2), cut DATE, _load VARCHAR) \
+         WITH (partitioning = ARRAY['cut', '_load'])"
+    );
+    assert_eq!(
+        steps[1],
+        "ALTER TABLE \"lake\".\"clients_bronze\".\"clients_2026\" ADD COLUMN IF NOT EXISTS \"doc\" varchar(20)"
+    );
+    assert!(steps[3].starts_with("CREATE TABLE IF NOT EXISTS \"lake\".\"clients_silver\""));
+    assert!(steps[3].contains("\"Documento\" VARCHAR, \"Saldo\" DOUBLE"));
+    assert!(steps
+        .iter()
+        .skip(4)
+        .all(|s| s.contains("ADD COLUMN IF NOT EXISTS")));
+    assert!(steps.iter().all(|s| !s.contains("DROP")));
 }
