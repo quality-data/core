@@ -74,6 +74,14 @@ pub(crate) fn serving(
     let run_tokens = provider
         .clone()
         .and_then(|p| run_token_services(p, pool.clone()));
+    let run_sources = provider.clone().zip(catalog.clone()).map(|(p, catalog)| {
+        quality::run_source_api::RunSourceServices {
+            tokens: Arc::new(BundleTokens(p)),
+            sealer: Arc::new(BoxSealer(secret_box.clone())),
+            catalog,
+            log: Arc::new(Issues(Arc::new(PgAuditRepository::new(pool.clone())))),
+        }
+    });
     let quality = match provider {
         Some(p) => QualityModule::serving(
             pool.clone(),
@@ -105,6 +113,10 @@ pub(crate) fn serving(
     };
     let quality = match run_tokens {
         Some(services) => quality.with_run_tokens(pool.clone(), services),
+        None => quality,
+    };
+    let quality = match run_sources {
+        Some(services) => quality.with_run_sources(pool.clone(), services),
         None => quality,
     };
     Ok(ModuleRegistry::new().register(quality))
