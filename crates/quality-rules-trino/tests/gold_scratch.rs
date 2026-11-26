@@ -96,11 +96,67 @@ async fn the_scratch_rows_give_groups_cells_and_entities() {
         .collect();
     let e = entity_icd(JOB, &measured(&mapping, &rules)).unwrap();
     let sql = format!(
-        "SELECT a, round(b, 6), c FROM ({}) x (a, b, c) ORDER BY 1",
+        "SELECT a, round(b, 6), c FROM ({}) x (a, b, c, d) ORDER BY 1",
         e.sql
     );
     assert_eq!(
         table(rows(&base, &sql).await),
         json!([["h1", 0.91, "high"], ["h2", 0.8, "medium"]])
+    );
+}
+
+/// Ruling 73: the entities' aggregate views over synthetic entity rows of
+/// two cuts: the ICD's twentieths, the bands by segment, and the bands'
+/// moves from the previous cut by entity.
+#[tokio::test]
+async fn the_entity_views_give_only_aggregates() {
+    let Some(base) = url() else { return };
+    let entities = "(SELECT * FROM (VALUES \
+        ('loans', DATE '2026-09-30', 'h1', 0.95e0, 'high', 'PN'), \
+        ('loans', DATE '2026-09-30', 'h2', 0.70e0, 'low', 'PJ'), \
+        ('loans', DATE '2026-10-31', 'h1', 0.80e0, 'medium', 'PN'), \
+        ('loans', DATE '2026-10-31', 'h2', 0.72e0, 'low', 'PJ'), \
+        ('loans', DATE '2026-10-31', 'h3', 0.91e0, 'high', 'PN')) \
+        AS e (dataset, cut, entity, icd, band, segment))";
+    let runs = "(SELECT * FROM (VALUES ('loans', DATE '2026-09-30', 'r1'), \
+        ('loans', DATE '2026-10-31', 'r2')) AS r (dataset, cut, run_id))";
+    let view = |name: &str| {
+        let ddl = quality_rules_trino::install()
+            .into_iter()
+            .find(|s| s.sql.contains(&format!("\"{name}\" SECURITY DEFINER")))
+            .unwrap()
+            .sql;
+        let body = ddl
+            .split_once(" SECURITY DEFINER AS ")
+            .unwrap()
+            .1
+            .to_string();
+        format!(
+            "SELECT * FROM ({}) x WHERE cut = DATE '2026-10-31' ORDER BY 3, 4",
+            body.replace("\"gold\".\"quality_gold\".\"v_entity_icd\"", entities)
+                .replace("\"gold\".\"quality_gold\".\"current_run\"", runs)
+        )
+    };
+    assert_eq!(
+        table(rows(&base, &view("v_bands_by_segment")).await),
+        json!([
+            ["loans", "2026-10-31", "PJ", 0, 0, 1, 1],
+            ["loans", "2026-10-31", "PN", 1, 1, 0, 2]
+        ])
+    );
+    assert_eq!(
+        table(rows(&base, &view("v_band_transitions")).await),
+        json!([
+            ["loans", "2026-10-31", "high", "medium", 1],
+            ["loans", "2026-10-31", "low", "low", 1]
+        ])
+    );
+    assert_eq!(
+        table(rows(&base, &view("v_icd_distribution")).await),
+        json!([
+            ["loans", "2026-10-31", 0.7, 1],
+            ["loans", "2026-10-31", 0.8, 1],
+            ["loans", "2026-10-31", 0.9, 1]
+        ])
     );
 }
