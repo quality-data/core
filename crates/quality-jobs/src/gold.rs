@@ -90,7 +90,7 @@ pub fn slas(job: &Job<'_>, input: &SlasInput) -> Result<Bundle, CompileError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quality::bundle::{Bundle, Expect};
+    use quality::bundle::{Bundle, Expect, RunAs};
 
     fn job(cut: Option<&'static str>) -> Job<'static> {
         Job {
@@ -125,6 +125,8 @@ mod tests {
             let delete = s.sql.starts_with("DELETE");
             assert_eq!(delete, s.only_if_rows.is_some(), "{}", s.id);
             assert_eq!(delete, s.expects == Expect::delete(), "{}", s.id);
+            let count = s.id.ends_with("_rows");
+            assert_eq!(count, s.run_as == RunAs::Report, "{}", s.id);
         }
         let older = &b.statements[2 * n + 2];
         assert!(older.sql.contains("run_id <> 'r-7'"), "{}", older.sql);

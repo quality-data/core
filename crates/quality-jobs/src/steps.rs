@@ -26,11 +26,17 @@ fn unbound(s: Statement) -> Result<String, CompileError> {
 
 impl Steps {
     fn push(&mut self, id: String, sql: String, expects: Expect, after: Option<String>) {
+        // A count reads gold, which only the report user may (point 7.3:
+        // a bare `SELECT` by a rule user is refused).
+        let run_as = match expects {
+            Expect::Rows { .. } => RunAs::Report,
+            _ => RunAs::Job,
+        };
         self.statements.push(BundleStatement {
             id,
             sql,
             expects,
-            run_as: RunAs::Job,
+            run_as,
             reads_source: false,
             only_if_rows: after.map(|after| OnlyIfRows { after }),
         });
