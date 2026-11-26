@@ -25,6 +25,7 @@ use quality::lake::{LakeAccess, LakeIssuer, TableCatalog};
 use quality::manifest::ManifestStore;
 use quality::module::QualityModule;
 use quality::proposal::Patterns;
+use quality::run_token_api::RunTokenServices;
 use quality::source_store::Sealer;
 use quality::worker_api::WorkerServices;
 use texts::Language;
@@ -70,6 +71,9 @@ pub(crate) fn serving(
     let bundles = provider
         .clone()
         .and_then(|p| bundle_services(p, pool.clone(), catalog.clone()));
+    let run_tokens = provider
+        .clone()
+        .and_then(|p| run_token_services(p, pool.clone()));
     let quality = match provider {
         Some(p) => QualityModule::serving(
             pool.clone(),
@@ -97,6 +101,10 @@ pub(crate) fn serving(
     };
     let quality = match bundles {
         Some(services) => quality.with_bundles(pool.clone(), services),
+        None => quality,
+    };
+    let quality = match run_tokens {
+        Some(services) => quality.with_run_tokens(pool.clone(), services),
         None => quality,
     };
     Ok(ModuleRegistry::new().register(quality))
@@ -290,6 +298,21 @@ fn bundle_services(
         tokens: Arc::new(BundleTokens(p.clone())),
         signer: Arc::new(ProviderBundles(p)),
         compiler: Arc::new(crate::job_compiler::TrinoJobs { pool, catalog }),
+    })
+}
+
+/// The run token route's services (decision 0090, point 7.1): asked with
+/// the job runners' machine tokens, recorded in the audit log, issued with
+/// the provider's ES256 key; `None` without that key.
+fn run_token_services(p: AuthorizationServer, pool: PgPool) -> Option<RunTokenServices> {
+    p.sign_es256("at+jwt", "{}")?;
+    Some(RunTokenServices {
+        tokens: Arc::new(BundleTokens(p.clone())),
+        issuer: Arc::new(crate::trino_tokens::ProviderTrinoTokens::new(
+            p,
+            pool.clone(),
+        )),
+        log: Arc::new(Issues(Arc::new(PgAuditRepository::new(pool)))),
     })
 }
 
