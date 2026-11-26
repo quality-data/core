@@ -119,6 +119,65 @@ pub(crate) async fn store(
 /// A listing's report, of the source it was asked for: refused (422) if
 /// it is another's or does not hold together; dropped if the source was
 /// deleted meanwhile, which takes its listing with it.
+/// A Trino run's listing from its report's rows `(schema, table, column,
+/// type)`, in order (decision 0090, ruling 68): one table per schema and
+/// name, its columns in the order read; past [`MAX_TABLES`], truncated.
+pub(crate) fn listing_from_rows(source: &str, rows: &[Vec<serde_json::Value>]) -> TableListing {
+    let mut tables: Vec<SourceTable> = Vec::new();
+    let mut truncated = false;
+    for r in rows {
+        let text = |i: usize| {
+            r.get(i)
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string()
+        };
+        let (schema, name) = (text(0), text(1));
+        let column = SourceColumn {
+            name: text(2),
+            data_type: text(3),
+        };
+        let full = tables.len() == MAX_TABLES;
+        match tables.last_mut() {
+            Some(t) if t.schema == schema && t.name == name => t.columns.push(column),
+            _ if full => truncated = true,
+            _ => tables.push(SourceTable {
+                schema,
+                name,
+                columns: vec![column],
+            }),
+        }
+    }
+    TableListing {
+        source: source.into(),
+        tables,
+        truncated,
+    }
+}
+
+/// Keeps a Trino run's listing of its source: it replaces the source's
+/// listing, as the latest.
+pub(crate) async fn store_run(
+    tx: &mut Transaction<'_, Postgres>,
+    job: Uuid,
+    listing: &TableListing,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO quality.source_tables (source, job, asked_at, tables, truncated)
+         VALUES ($1, $2, now(), $3, $4)
+         ON CONFLICT (tenant_id, source) DO UPDATE
+            SET job = EXCLUDED.job, asked_at = EXCLUDED.asked_at, listed_at = now(),
+                tables = EXCLUDED.tables, truncated = EXCLUDED.truncated",
+    )
+    .bind(&listing.source)
+    .bind(job)
+    .bind(sqlx::types::Json(&listing.tables))
+    .bind(listing.truncated)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
 pub(crate) async fn report(
     pool: &PgPool,
     job: Uuid,

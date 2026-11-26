@@ -23,6 +23,8 @@ use crate::worker_api::MachineTokens;
 /// The statements whose rows feed the index (quality-jobs' evaluate).
 const INDEX_SUMMARY: &str = "index_run_summary";
 const INDEX_RULES: &str = "index_rule_results";
+/// The statement whose rows are a `tables` run's listing.
+const LISTING: &str = "listing";
 
 /// What a job runner reports of a run.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -98,13 +100,15 @@ pub fn routes(pool: PgPool, services: RunReportServices) -> Router {
 
 type Refusal = (StatusCode, Json<Value>);
 
-/// A pinned bundle's row: kind, dataset, cut, digest and the signed bundle.
+/// A pinned bundle's row: kind, dataset, cut, digest, the signed bundle
+/// and the source a source's job reads.
 type PinnedRow = (
     String,
     Option<String>,
     Option<chrono::NaiveDate>,
     String,
     String,
+    Option<String>,
 );
 
 fn refused(status: StatusCode, error: &str) -> Refusal {
@@ -149,13 +153,13 @@ async fn report(
         .and_then(|t| api.services.tokens.client(t))
         .ok_or_else(|| refused(StatusCode::UNAUTHORIZED, "unauthorized"))?;
     let pinned: Option<PinnedRow> = sqlx::query_as(
-        "SELECT kind, dataset, cut, digest, bundle FROM quality.job_bundles WHERE run = $1",
+        "SELECT kind, dataset, cut, digest, bundle, source FROM quality.job_bundles WHERE run = $1",
     )
     .bind(&run)
     .fetch_optional(&api.pool)
     .await
     .map_err(internal)?;
-    let (kind, dataset, cut, digest, token) =
+    let (kind, dataset, cut, digest, token, source) =
         pinned.ok_or_else(|| refused(StatusCode::NOT_FOUND, "no_bundle"))?;
     if r.digest != digest {
         return Err(refused(StatusCode::CONFLICT, "digest_mismatch"));
@@ -193,6 +197,9 @@ async fn report(
     if kept == 0 {
         return Err(refused(StatusCode::CONFLICT, "already_reported"));
     }
+    if kind == "tables" && r.state == RunState::Done {
+        listed(&mut tx, &run, source.as_deref(), &r).await?;
+    }
     let indexed = matches!(kind.as_str(), "evaluate" | "backfill") && r.state == RunState::Done;
     if let (true, Some(dataset), Some(cut)) = (indexed, dataset, cut) {
         index(&mut tx, &run, &dataset, cut, &b, &r).await?;
@@ -207,6 +214,36 @@ fn rows_of<'a>(r: &'a RunReport, id: &str) -> Option<&'a Vec<Vec<Value>>> {
         .iter()
         .find(|s| s.id == id && s.state == StatementState::Done)
         .and_then(|s| s.rows.as_ref())
+}
+
+/// A `tables` run's listing into `quality.source_tables` (ruling 68).
+async fn listed(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    run: &str,
+    source: Option<&str>,
+    r: &RunReport,
+) -> Result<(), Refusal> {
+    let job =
+        uuid::Uuid::parse_str(run).map_err(|_| refused(StatusCode::BAD_REQUEST, "invalid_run"))?;
+    let source = source.ok_or_else(|| refused(StatusCode::UNPROCESSABLE_ENTITY, "no_source"))?;
+    let rows = rows_of(r, LISTING)
+        .ok_or_else(|| refused(StatusCode::UNPROCESSABLE_ENTITY, "listing_missing"))?;
+    let listing = crate::source_tables::listing_from_rows(source, rows);
+    let driver: Option<String> =
+        sqlx::query_scalar("SELECT driver FROM quality.sources WHERE name = $1")
+            .bind(source)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(internal)?;
+    let Some(driver) = driver else {
+        return Ok(());
+    };
+    if !listing.is_valid(&driver) {
+        return Err(refused(StatusCode::UNPROCESSABLE_ENTITY, "listing_invalid"));
+    }
+    crate::source_tables::store_run(tx, job, &listing)
+        .await
+        .map_err(internal)
 }
 
 /// The index from the run's read-back rows (ruling 76): its summary and

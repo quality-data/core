@@ -83,6 +83,24 @@ fn plain(sql: String) -> Statement {
     Statement { sql }
 }
 
+/// A source's listing (decision 0090, rulings 68 and point 9): every
+/// column of every table its catalog `src_<source>` shows, with the type
+/// name Trino gives it, the system schemas left out (`exclude`, lower
+/// case), in order. Names and types only, never a value.
+pub fn source_listing(source: &str, exclude: &[&str]) -> Result<Statement, Error> {
+    let mut system: Vec<String> = vec!["'information_schema'".into()];
+    for s in exclude {
+        system.push(quote_text(&s.to_ascii_lowercase())?);
+    }
+    Ok(plain(format!(
+        "SELECT table_schema, table_name, column_name, data_type FROM {}.\"information_schema\".\"columns\" \
+         WHERE lower(table_schema) NOT IN ({}) \
+         ORDER BY table_schema, table_name, ordinal_position",
+        quoted(&format!("src_{source}"))?,
+        system.join(", ")
+    )))
+}
+
 /// The source's catalog `src_<source>`: where it is, and no secret. The
 /// user and password come with each statement as extra credentials.
 pub fn create_catalog(

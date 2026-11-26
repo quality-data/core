@@ -29,7 +29,7 @@ const NAMES: [&str; 2] = ["user", "password"];
 
 /// The kinds whose bundles read a source.
 fn reads_source(kind: &str) -> bool {
-    kind == "extract"
+    matches!(kind, "extract" | "tables")
 }
 
 /// A source's extra credentials: kept in the job runner's memory only.
@@ -106,28 +106,36 @@ async fn secrets_of(
         tracing::error!(run, "source secrets: {e}");
         refused(StatusCode::INTERNAL_SERVER_ERROR, "internal")
     };
-    let pinned: Option<(String, Option<String>)> =
-        sqlx::query_as("SELECT kind, dataset FROM quality.job_bundles WHERE run = $1")
+    let pinned: Option<(String, Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT kind, dataset, source FROM quality.job_bundles WHERE run = $1")
             .bind(&run)
             .fetch_optional(&api.pool)
             .await
             .map_err(|e| internal(e.to_string()))?;
-    let (kind, dataset) = pinned.ok_or_else(|| refused(StatusCode::NOT_FOUND, "no_bundle"))?;
-    let dataset = dataset
-        .filter(|_| reads_source(&kind))
-        .ok_or_else(|| refused(StatusCode::FORBIDDEN, "reads_no_source"))?;
-    let snapshot = api
-        .services
-        .catalog
-        .snapshot(&dataset)
-        .await
-        .map_err(internal)?
-        .ok_or_else(|| refused(StatusCode::CONFLICT, "no_mapping"))?;
-    let source = Mapping::parse(&snapshot.mapping)
-        .ok()
-        .and_then(|m| m.from)
-        .map(|f| f.value.source)
-        .ok_or_else(|| refused(StatusCode::CONFLICT, "no_source"))?;
+    let (kind, dataset, named) =
+        pinned.ok_or_else(|| refused(StatusCode::NOT_FOUND, "no_bundle"))?;
+    if !reads_source(&kind) {
+        return Err(refused(StatusCode::FORBIDDEN, "reads_no_source"));
+    }
+    // A source's job names its source; a dataset's reads its mapping's.
+    let source = match (named, dataset) {
+        (Some(source), _) => source,
+        (None, Some(dataset)) => {
+            let snapshot = api
+                .services
+                .catalog
+                .snapshot(&dataset)
+                .await
+                .map_err(internal)?
+                .ok_or_else(|| refused(StatusCode::CONFLICT, "no_mapping"))?;
+            Mapping::parse(&snapshot.mapping)
+                .ok()
+                .and_then(|m| m.from)
+                .map(|f| f.value.source)
+                .ok_or_else(|| refused(StatusCode::CONFLICT, "no_source"))?
+        }
+        (None, None) => return Err(refused(StatusCode::CONFLICT, "no_source")),
+    };
     let credentials = source_store::credentials(&api.pool, api.services.sealer.as_ref(), &source)
         .await
         .map_err(|e| match e {
@@ -169,6 +177,6 @@ mod tests {
         };
         assert_eq!(s.current.len(), 2);
         assert!(!format!("{s:?}").contains("synthetic"));
-        assert!(reads_source("extract") && !reads_source("evaluate"));
+        assert!(reads_source("extract") && reads_source("tables") && !reads_source("evaluate"));
     }
 }

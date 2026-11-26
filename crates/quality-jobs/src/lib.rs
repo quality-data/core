@@ -9,6 +9,7 @@ mod gold;
 mod prepare;
 mod rule_test;
 mod steps;
+mod tables;
 
 pub use evaluate::{
     evaluate, AtSnapshots, EvaluateInput, ReferencePin, INDEX_RULES, INDEX_SUMMARY,
@@ -17,6 +18,7 @@ pub use extract::{extract, ExtractInput};
 pub use gold::{retract, slas, RetractInput, SlasInput};
 pub use prepare::{prepare, PrepareInput};
 pub use rule_test::{rule_test, RuleTestInput, COUNTS};
+pub use tables::{tables, LISTING, MAX_LISTING_ROWS};
 
 use quality::bundle::Bundle;
 

@@ -141,6 +141,8 @@ async fn fixture() -> (testkit::TestDb, sqlx::PgPool, Router, Bundle) {
         "ALTER TABLE quality.run_summary OWNER TO app",
         "ALTER TABLE quality.rule_results OWNER TO app",
         "ALTER TABLE quality.cuts OWNER TO app",
+        "ALTER TABLE quality.sources OWNER TO app",
+        "ALTER TABLE quality.source_tables OWNER TO app",
     ] {
         sqlx::query(sql).execute(&db.pool).await.unwrap();
     }
@@ -245,5 +247,78 @@ async fn a_done_evaluate_writes_the_index_from_its_read_back_counts() {
     assert_eq!(
         post(&router, Some("token-runner"), &good).await,
         (StatusCode::CONFLICT, json!({ "error": "already_reported" }))
+    );
+}
+
+/// Ruling 68: a `tables` run's listing rows become its source's listing.
+#[tokio::test]
+async fn a_tables_runs_listing_is_kept_as_its_sources() {
+    let (_db, app, router, _) = fixture().await;
+    for sql in
+        ["INSERT INTO quality.sources (name, driver, secrets) VALUES ('core', 'postgres', 'x')"]
+    {
+        sqlx::query(sql).execute(&app).await.unwrap();
+    }
+    let run = "0b9c6a1e-0000-4000-8000-000000000032";
+    let b = Bundle {
+        job_id: run.into(),
+        kind: "tables".into(),
+        dataset: None,
+        cut: None,
+        run_id: None,
+        run_seq: None,
+        catalog_commit: None,
+        statements: vec![read(
+            "listing",
+            &[
+                ("table_schema", "varchar"),
+                ("table_name", "varchar"),
+                ("column_name", "varchar"),
+                ("data_type", "varchar"),
+            ],
+            100,
+        )],
+        ..bundle()
+    };
+    sqlx::query(
+        "INSERT INTO quality.job_bundles (run, kind, digest, bundle, asked_by, source)
+         VALUES ($1, 'tables', $2, $3, 'runner', 'core')",
+    )
+    .bind(run)
+    .bind(b.digest())
+    .bind(bundle::sign(&Plain, &b))
+    .execute(&app)
+    .await
+    .unwrap();
+    let report = json!({
+        "digest": b.digest(),
+        "state": "done",
+        "statements": [{ "id": "listing", "state": "done", "rows": [
+            ["public", "loans", "loan_id", "bigint"],
+            ["public", "loans", "amount", "decimal(12,2)"],
+            ["public", "offices", "code", "varchar"]
+        ]}]
+    });
+    let req = Request::post(format!("/internal/quality/v1/runs/{run}/report"))
+        .header("content-type", "application/json")
+        .header("authorization", "Bearer token-runner")
+        .body(Body::from(report.to_string()))
+        .unwrap();
+    let res = router.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    let tables: Value =
+        sqlx::query_scalar("SELECT tables FROM quality.source_tables WHERE source = 'core'")
+            .fetch_one(&app)
+            .await
+            .unwrap();
+    assert_eq!(
+        tables,
+        json!([
+            {"schema": "public", "name": "loans", "columns": [
+                {"name": "loan_id", "data_type": "bigint"},
+                {"name": "amount", "data_type": "decimal(12,2)"}]},
+            {"schema": "public", "name": "offices", "columns": [
+                {"name": "code", "data_type": "varchar"}]}
+        ])
     );
 }

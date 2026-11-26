@@ -33,6 +33,8 @@ pub enum TrinoUser {
     Maint,
     /// Reads its sources and loads its dataset's bronze.
     Extract,
+    /// Reads one source's catalog: its listing (a `tables` job).
+    Source,
 }
 
 impl TrinoUser {
@@ -42,6 +44,7 @@ impl TrinoUser {
             Self::Report => "report",
             Self::Maint => "maint",
             Self::Extract => "extract",
+            Self::Source => "source",
         }
     }
 }
@@ -55,6 +58,7 @@ fn users_of(kind: &str) -> &'static [TrinoUser] {
         }
         "prepare" => &[TrinoUser::Maint],
         "extract" => &[TrinoUser::Extract, TrinoUser::Report],
+        "tables" => &[TrinoUser::Source],
         _ => &[],
     }
 }
@@ -144,8 +148,8 @@ async fn token_of(
         .and_then(|t| api.services.tokens.client(t))
         .ok_or_else(|| refused(StatusCode::UNAUTHORIZED, "unauthorized"))?;
     let job = Uuid::parse_str(&run).map_err(|_| refused(StatusCode::BAD_REQUEST, "invalid_run"))?;
-    let pinned: Option<(String, Option<String>)> =
-        sqlx::query_as("SELECT kind, dataset FROM quality.job_bundles WHERE run = $1")
+    let pinned: Option<(String, Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT kind, dataset, source FROM quality.job_bundles WHERE run = $1")
             .bind(&run)
             .fetch_optional(&api.pool)
             .await
@@ -153,8 +157,15 @@ async fn token_of(
                 tracing::error!("reading the run's bundle: {e}");
                 refused(StatusCode::INTERNAL_SERVER_ERROR, "internal")
             })?;
-    let (kind, dataset) = pinned.ok_or_else(|| refused(StatusCode::NOT_FOUND, "no_bundle"))?;
-    let dataset = dataset
+    let (kind, dataset, source) =
+        pinned.ok_or_else(|| refused(StatusCode::NOT_FOUND, "no_bundle"))?;
+    // A source's user is over its source; every other over the dataset.
+    let target = if ask.user == TrinoUser::Source {
+        source
+    } else {
+        dataset
+    };
+    let dataset = target
         .filter(|_| users_of(&kind).contains(&ask.user))
         .ok_or_else(|| refused(StatusCode::FORBIDDEN, "user_not_allowed"))?;
     let actor = caller.worker_prefix();

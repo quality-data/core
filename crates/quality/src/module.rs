@@ -197,6 +197,7 @@ impl Module for QualityModule {
             migration!("0030_job_bundles"),
             migration!("0031_field_quality_floating"),
             migration!("0032_job_reports"),
+            migration!("0033_job_bundles_source"),
         ]
     }
 

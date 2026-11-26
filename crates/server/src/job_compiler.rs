@@ -134,6 +134,7 @@ impl JobCompiler for TrinoJobs {
             "backfill" => self.backfill(j, job).await,
             "prepare" => self.prepare(j).await,
             "extract" => self.extract(j).await,
+            "tables" => self.tables(j, job).await,
             _ => Err(CompileRefused("kind_not_compiled")),
         }
     }
@@ -154,6 +155,21 @@ impl TrinoJobs {
         let mapping =
             Mapping::parse(&snapshot.mapping).map_err(|_| CompileRefused("mapping_invalid"))?;
         Ok((mapping, snapshot.commit))
+    }
+
+    /// A source's listing from its Trino catalog (ruling 68), its system
+    /// schemas left out.
+    async fn tables(&self, j: Job<'_>, job: &JobRequest) -> Result<Bundle, CompileRefused> {
+        let source = job
+            .source
+            .as_deref()
+            .ok_or(CompileRefused("job_incomplete"))?;
+        let driver = quality::source_store::driver_of(&self.pool, source)
+            .await
+            .map_err(database)?
+            .ok_or(CompileRefused("no_source"))?;
+        let system = quality::source_tables::system_schemas(&driver);
+        quality_jobs::tables(&j, source, system).map_err(refused)
     }
 
     /// An extract of the mapped source table into bronze (ruling 67).

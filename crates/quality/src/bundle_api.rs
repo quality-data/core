@@ -33,6 +33,9 @@ pub struct JobRequest {
     #[serde(default)]
     pub cut: Option<chrono::NaiveDate>,
     pub attempt: u32,
+    /// The source a source's job reads (a `tables` listing).
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 /// Why a job cannot be compiled: a class the job runner reports, never the
@@ -141,8 +144,8 @@ async fn bundle_of(
     let digest = compiled.digest();
     let token = bundle::sign(api.services.signer.as_ref(), &compiled);
     sqlx::query(
-        "INSERT INTO quality.job_bundles (run, kind, dataset, cut, digest, bundle, asked_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING",
+        "INSERT INTO quality.job_bundles (run, kind, dataset, cut, digest, bundle, asked_by, source)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT DO NOTHING",
     )
     .bind(&run)
     .bind(&job.kind)
@@ -151,6 +154,7 @@ async fn bundle_of(
     .bind(&digest)
     .bind(&token)
     .bind(caller.worker_prefix())
+    .bind(&job.source)
     .execute(&api.pool)
     .await
     .map_err(internal)?;
