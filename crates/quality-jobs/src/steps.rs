@@ -25,12 +25,18 @@ impl Steps {
             Expect::Rows { .. } => RunAs::Report,
             _ => RunAs::Job,
         };
+        // A write into gold holds its table's mutex (ruling 92(b)).
+        let lock = match expects {
+            Expect::Count { .. } => quality::bundle::gold_lock(&sql),
+            _ => None,
+        };
         self.statements.push(BundleStatement {
             id,
             sql,
             expects,
             run_as,
             reads_source: false,
+            lock,
             only_if_rows: after.map(|after| OnlyIfRows { after }),
         });
     }

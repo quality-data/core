@@ -72,6 +72,7 @@ impl JobCompiler for Compiler {
                 run_as: RunAs::Job,
                 reads_source: false,
                 only_if_rows: None,
+                lock: None,
             }],
         })
     }

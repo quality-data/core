@@ -106,6 +106,23 @@ pub struct BundleStatement {
     /// that pick one percentile method.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub only_if_rows: Option<OnlyIfRows>,
+    /// The gold table it writes, `<catalog>.<schema>.<table>`, whose
+    /// mutex the operator holds while it runs (decision 0090, ruling
+    /// 92(b): one writer per gold table, point 4); signed with the rest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lock: Option<String>,
+}
+
+/// The gold table a statement writes (`INSERT INTO` or `DELETE FROM` one
+/// of `lake.quality_gold`'s tables), as its lock names it.
+pub fn gold_lock(sql: &str) -> Option<String> {
+    const GOLD: &str = "\"lake\".\"quality_gold\".\"";
+    let rest = sql
+        .strip_prefix("INSERT INTO ")
+        .or_else(|| sql.strip_prefix("DELETE FROM "))?
+        .strip_prefix(GOLD)?;
+    let table = &rest[..rest.find('"')?];
+    is_statement_id(table).then(|| format!("lake.quality_gold.{table}"))
 }
 
 /// The job contract (point 2).
@@ -164,6 +181,10 @@ impl Bundle {
                 .enumerate()
                 .all(|(i, s)| self.steps_checked(i, s))
             && self.statements.iter().all(values_checked)
+            && self
+                .statements
+                .iter()
+                .all(|s| s.lock.is_none() || s.lock == gold_lock(&s.sql))
     }
 
     /// The statement `id` among the first `before`, if any.
@@ -311,6 +332,7 @@ mod tests {
                 run_as: RunAs::Job,
                 reads_source: false,
                 only_if_rows: None,
+                lock: None,
             }],
         }
     }
@@ -416,5 +438,35 @@ mod tests {
                 max_rows: 1,
             }
         }));
+    }
+
+    #[test]
+    fn a_gold_write_is_locked_by_its_table_and_nothing_else_is() {
+        assert_eq!(
+            gold_lock("INSERT INTO \"lake\".\"quality_gold\".\"rule_results\" (dataset) SELECT 1")
+                .as_deref(),
+            Some("lake.quality_gold.rule_results")
+        );
+        assert_eq!(
+            gold_lock("DELETE FROM \"lake\".\"quality_gold\".\"findings\" WHERE run_id = 'r'")
+                .as_deref(),
+            Some("lake.quality_gold.findings")
+        );
+        for sql in [
+            "SELECT * FROM \"lake\".\"quality_gold\".\"findings\"",
+            "INSERT INTO \"lake\".\"loans_bronze\".\"loans\" SELECT 1",
+            "DELETE FROM \"lake\".\"quality_scratch\".\"record_icd\"",
+        ] {
+            assert_eq!(gold_lock(sql), None, "{sql}");
+        }
+        let mut b = bundle();
+        b.statements[0].sql = "INSERT INTO \"lake\".\"quality_gold\".\"cells\" SELECT 1".into();
+        b.statements[0].lock = gold_lock(&b.statements[0].sql);
+        assert!(b.well_formed());
+        assert!(b
+            .canonical()
+            .contains("\"lock\":\"lake.quality_gold.cells\""));
+        b.statements[0].lock = Some("lake.quality_gold.findings".into());
+        assert!(!b.well_formed(), "a lock that is not its table's");
     }
 }

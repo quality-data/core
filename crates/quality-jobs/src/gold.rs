@@ -128,6 +128,11 @@ mod tests {
             assert_eq!(delete, s.expects == Expect::delete(), "{}", s.id);
             let count = s.id.ends_with("_rows");
             assert_eq!(count, s.run_as == RunAs::Report, "{}", s.id);
+            // Every write holds its gold table's mutex (ruling 92(b)).
+            assert_eq!(count, s.lock.is_none(), "{}", s.id);
+            if let Some(lock) = &s.lock {
+                assert!(lock.starts_with("lake.quality_gold."), "{lock}");
+            }
         }
         let older = &b.statements[2 * n + 2];
         assert!(older.sql.contains("run_id <> 'r-7'"), "{}", older.sql);

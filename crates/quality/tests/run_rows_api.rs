@@ -50,6 +50,7 @@ fn statement(id: &str, expects: Expect, run_as: RunAs) -> BundleStatement {
         run_as,
         reads_source: true,
         only_if_rows: None,
+        lock: None,
     }
 }
 

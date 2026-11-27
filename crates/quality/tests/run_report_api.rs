@@ -56,6 +56,7 @@ fn read(id: &str, columns: &[(&str, &str)], max_rows: u64) -> BundleStatement {
         run_as: RunAs::Report,
         reads_source: false,
         only_if_rows: None,
+        lock: None,
     }
 }
 
@@ -79,6 +80,7 @@ fn bundle() -> Bundle {
                 run_as: RunAs::Job,
                 reads_source: false,
                 only_if_rows: None,
+                lock: None,
             },
             read(
                 "index_run_summary",

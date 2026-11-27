@@ -121,6 +121,7 @@ mod tests {
             run_as: RunAs::Job,
             reads_source: false,
             only_if_rows: None,
+            lock: None,
         }
     }
 
@@ -132,6 +133,7 @@ mod tests {
             run_as: RunAs::Job,
             reads_source: false,
             only_if_rows: after.map(|a| OnlyIfRows { after: a.into() }),
+            lock: None,
         }
     }
 
