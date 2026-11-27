@@ -17,7 +17,7 @@ use quality::manifest::ManifestStore;
 use quality::mapping::Mapping;
 use quality_jobs::{
     AtSnapshots, CompileError, EvaluateInput, ExtractInput, Job, MapInput, PrepareInput,
-    RecordsInput, ReferencePin, RetractInput, SlasInput,
+    RecordsInput, ReferencePin, RetractInput, SlasInput, TestRuleInput,
 };
 use quality_rules_trino::{Sla, TablePath};
 
@@ -137,6 +137,7 @@ impl JobCompiler for TrinoJobs {
             "tables" => self.tables(j, job).await,
             "records" => self.records(j, job).await,
             "map" => self.map(j, job).await,
+            "test_rule" => self.test_rule(j).await,
             _ => Err(CompileRefused("kind_not_compiled")),
         }
     }
@@ -195,6 +196,37 @@ impl TrinoJobs {
             page: r.ask.page,
         };
         quality_jobs::records(&j, &input).map_err(refused)
+    }
+
+    /// A person's rules test on the asked cut (ruling 83), from the text
+    /// its job carries, against the mapping on the catalog's `main`.
+    async fn test_rule(&self, j: Job<'_>) -> Result<Bundle, CompileRefused> {
+        let catalog = self
+            .catalog
+            .as_deref()
+            .ok_or(CompileRefused("catalog_not_configured"))?;
+        let f = quality::test_rule_run::facts_of(&self.pool, catalog, j.run)
+            .await
+            .map_err(facts)?;
+        let cut = f.cut.format("%Y-%m-%d").to_string();
+        if j.dataset != Some(f.dataset.as_str()) || j.cut != Some(cut.as_str()) {
+            return Err(CompileRefused("job_incomplete"));
+        }
+        let (ns, table) = quality::layers::silver(&f.mapping).ok_or(CompileRefused("no_silver"))?;
+        let j = Job {
+            catalog_commit: Some(&f.commit),
+            ..j
+        };
+        let input = TestRuleInput {
+            rules: &f.rules,
+            tables: &f.tables,
+            silver: lake(ns, table),
+            load: f.load.as_deref(),
+            key: &f.mapping.key,
+            columns: &f.columns,
+            each: f.each,
+        };
+        quality_jobs::test_rule(&j, &input).map_err(refused)
     }
 
     /// A source table's profile for a map (ruling 79), as its job asked.

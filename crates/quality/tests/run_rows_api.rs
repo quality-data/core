@@ -466,3 +466,84 @@ async fn a_map_runs_profile_becomes_its_datasets_proposal() {
             .unwrap();
     assert_eq!(cuts, 1);
 }
+
+/// Ruling 83: each rule's read of a `test_rule` run is merged into the
+/// test's report, kept for its asker.
+#[tokio::test]
+async fn a_test_rule_runs_reads_merge_into_its_report() {
+    let mut b = bundle("test_rule");
+    b.cut = Some("2026-10-31".into());
+    let columns: Vec<(String, String)> = [
+        ("part", "varchar"),
+        ("rule", "varchar"),
+        ("outcome", "varchar"),
+        ("shape", "varchar"),
+        ("n", "bigint"),
+        ("c0", "varchar"),
+    ]
+    .iter()
+    .map(|(n, t)| ((*n).to_owned(), (*t).to_owned()))
+    .collect();
+    let read = |id: &str, columns: &Vec<(String, String)>| {
+        statement(
+            id,
+            Expect::Values {
+                columns: columns.clone(),
+                max_rows: 234,
+            },
+            RunAs::Job,
+        )
+    };
+    b.statements = vec![read("rule_0", &columns), read("rule_1", &columns)];
+    let (db, app, router) = fixture(&b).await;
+    for sql in [
+        "ALTER TABLE quality.rule_tests OWNER TO app",
+        "ALTER TABLE quality.jobs OWNER TO app",
+    ] {
+        sqlx::query(sql).execute(&db.pool).await.unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO quality.jobs (id, kind, dataset, parameters) VALUES ($1::uuid, 'test_rule', 'loans', '{}')",
+    )
+    .bind(RUN)
+    .execute(&app)
+    .await
+    .unwrap();
+    let runner = Some("token-runner");
+    let first = json!({ "statement": "rule_0", "rows": [
+        ["fields", "R1", null, null, null, "Id"],
+        ["counts", "R1", "fails", null, 1, null],
+        ["counts", "R1", "passes", null, 3, null],
+        ["record", "R1", "fails", null, null, "Synthetic 1"],
+        ["group", "R1", "fails", "Aaaaa 9", 1, "Synthetic 1"]
+    ]});
+    let second = json!({ "statement": "rule_1", "rows": [
+        ["fields", "R2", null, null, null, "Id"],
+        ["counts", "R2", "skips", null, 4, null]
+    ]});
+    for body in [&first, &second, &first] {
+        assert_eq!(
+            post(&router, "rows", runner, body).await.0,
+            StatusCode::NO_CONTENT
+        );
+    }
+    let report: Value =
+        sqlx::query_scalar("SELECT report FROM quality.rule_tests WHERE job = $1::uuid")
+            .bind(RUN)
+            .fetch_one(&app)
+            .await
+            .unwrap();
+    assert_eq!(report["cut"], "2026-10-31");
+    assert_eq!(report["records"], 4);
+    let rules = report["rules"].as_array().unwrap();
+    assert_eq!(rules.len(), 2, "a repeated read replaces its rule");
+    assert_eq!(rules[0]["rule"], "R1");
+    assert_eq!(rules[0]["applies"], 4);
+    assert_eq!(rules[0]["groups"][0]["count"], 1);
+    assert_eq!(rules[1]["skips"], 4);
+    let bad = json!({ "statement": "rule_0", "rows": [["counts", "R1", "fails", null, 1, null]] });
+    assert_eq!(
+        post(&router, "rows", runner, &bad).await,
+        refusal("rows_invalid")
+    );
+}

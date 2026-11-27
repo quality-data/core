@@ -59,6 +59,7 @@ impl TrinoTokens for ProviderTrinoTokens {
             TrinoUser::Report => JobUserKind::Report,
             TrinoUser::Maint => JobUserKind::Maint,
             TrinoUser::Extract => JobUserKind::Extract,
+            TrinoUser::Sample => JobUserKind::Sample,
             TrinoUser::Source => JobUserKind::Source,
         };
         let subject = JobSubject::new(&job.to_string(), kind, dataset)

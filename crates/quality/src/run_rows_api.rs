@@ -145,6 +145,9 @@ async fn hand_over(api: &Api, run: &ValuesRun, rows: &RunRows) -> Result<(), Ref
     if run.kind == crate::records_api::KIND {
         return crate::records_run::take(&api.pool, run, rows).await;
     }
+    if run.kind == crate::test_rule_run::KIND {
+        return crate::test_rule_run::take(&api.pool, run, rows).await;
+    }
     if run.kind == crate::map_run::KIND {
         return crate::map_run::take(&api.pool, &api.services, run, rows).await;
     }

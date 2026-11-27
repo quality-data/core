@@ -12,6 +12,7 @@ mod records;
 mod rule_test;
 mod steps;
 mod tables;
+mod test_rule;
 
 pub use evaluate::{
     evaluate, AtSnapshots, EvaluateInput, ReferencePin, INDEX_RULES, INDEX_SUMMARY,
@@ -23,6 +24,7 @@ pub use prepare::{prepare, PrepareInput};
 pub use records::{records, RecordsInput, PAGE_READ};
 pub use rule_test::{rule_test, RuleTestInput, COUNTS};
 pub use tables::{tables, LISTING, MAX_LISTING_ROWS};
+pub use test_rule::{test_rule, TestRuleInput};
 
 use quality::bundle::Bundle;
 

@@ -228,7 +228,7 @@ type Referenced = std::collections::BTreeMap<String, (String, String, String)>;
 
 /// The file's references as tables: the referenced dataset's silver in
 /// the lake catalog, its `where` as the filter.
-fn references(
+pub(crate) fn references(
     file: &RulesFile,
     others: &[crate::catalog::DatasetMapping],
     tables: &mut Tables,

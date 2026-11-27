@@ -75,6 +75,7 @@ pub mod source_store;
 pub mod source_tables;
 pub mod split_api;
 pub mod tables_api;
+pub mod test_rule_run;
 pub mod unconfigured;
 pub mod worker_api;
 pub mod worker_metrics;
