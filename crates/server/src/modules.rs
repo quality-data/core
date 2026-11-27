@@ -79,6 +79,8 @@ pub(crate) fn serving(
         Some(quality::run_report_api::RunReportServices {
             tokens: Arc::new(BundleTokens(p.clone())),
             signer: Arc::new(ProviderBundles(p)),
+            drafts: drafts.clone(),
+            proposal_alerts: Some(proposal_alerts(Language::Es)),
         })
     });
     let run_sources = provider.clone().zip(catalog.clone()).map(|(p, catalog)| {

@@ -6,6 +6,7 @@
 mod evaluate;
 mod extract;
 mod gold;
+mod map;
 mod prepare;
 mod records;
 mod rule_test;
@@ -17,6 +18,7 @@ pub use evaluate::{
 };
 pub use extract::{extract, ExtractInput};
 pub use gold::{retract, slas, RetractInput, SlasInput};
+pub use map::{map, MapInput, PROFILE};
 pub use prepare::{prepare, PrepareInput};
 pub use records::{records, RecordsInput, PAGE_READ};
 pub use rule_test::{rule_test, RuleTestInput, COUNTS};

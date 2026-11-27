@@ -29,7 +29,7 @@ const NAMES: [&str; 2] = ["user", "password"];
 
 /// The kinds whose bundles read a source.
 fn reads_source(kind: &str) -> bool {
-    matches!(kind, "extract" | "tables" | "records")
+    matches!(kind, "extract" | "tables" | "records" | "map")
 }
 
 /// A source's extra credentials: kept in the job runner's memory only.
@@ -178,6 +178,7 @@ mod tests {
         assert_eq!(s.current.len(), 2);
         assert!(!format!("{s:?}").contains("synthetic"));
         assert!(reads_source("extract") && reads_source("tables") && reads_source("records"));
+        assert!(reads_source("map"));
         assert!(!reads_source("evaluate"));
     }
 }

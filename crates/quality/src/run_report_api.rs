@@ -76,6 +76,10 @@ pub struct RunReportServices {
     /// Machine tokens for the bundle route's audience.
     pub tokens: Arc<dyn MachineTokens>,
     pub signer: Arc<dyn BundleSigner>,
+    /// Where a map run's proposal is published, and its rules' texts
+    /// (decision 0090, ruling 79); without them a map's profile waits.
+    pub drafts: Option<Arc<dyn crate::job_map::Drafts>>,
+    pub proposal_alerts: Option<crate::proposal::Alerts>,
 }
 
 impl std::fmt::Debug for RunReportServices {

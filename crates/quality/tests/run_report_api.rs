@@ -174,6 +174,8 @@ async fn fixture() -> (testkit::TestDb, sqlx::PgPool, Router, Bundle) {
             RunReportServices {
                 tokens: Arc::new(Tokens),
                 signer: Arc::new(Plain),
+                drafts: None,
+                proposal_alerts: None,
             },
         )
         .router();

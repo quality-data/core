@@ -16,8 +16,8 @@ use quality::job_inputs::{
 use quality::manifest::ManifestStore;
 use quality::mapping::Mapping;
 use quality_jobs::{
-    AtSnapshots, CompileError, EvaluateInput, ExtractInput, Job, PrepareInput, RecordsInput,
-    ReferencePin, RetractInput, SlasInput,
+    AtSnapshots, CompileError, EvaluateInput, ExtractInput, Job, MapInput, PrepareInput,
+    RecordsInput, ReferencePin, RetractInput, SlasInput,
 };
 use quality_rules_trino::{Sla, TablePath};
 
@@ -136,6 +136,7 @@ impl JobCompiler for TrinoJobs {
             "extract" => self.extract(j).await,
             "tables" => self.tables(j, job).await,
             "records" => self.records(j, job).await,
+            "map" => self.map(j, job).await,
             _ => Err(CompileRefused("kind_not_compiled")),
         }
     }
@@ -194,6 +195,29 @@ impl TrinoJobs {
             page: r.ask.page,
         };
         quality_jobs::records(&j, &input).map_err(refused)
+    }
+
+    /// A source table's profile for a map (ruling 79), as its job asked.
+    async fn map(&self, j: Job<'_>, job: &JobRequest) -> Result<Bundle, CompileRefused> {
+        let m = quality::map_run::job_of(&self.pool, j.run)
+            .await
+            .map_err(facts)?;
+        if job.source.as_deref() != Some(m.source.as_str())
+            || job.dataset.as_deref() != Some(m.dataset.as_str())
+        {
+            return Err(CompileRefused("job_incomplete"));
+        }
+        let columns: Vec<String> = m.columns.iter().map(|c| c.name.clone()).collect();
+        let patterns: Vec<&str> = m.patterns.all().iter().map(|(_, p)| *p).collect();
+        let input = MapInput {
+            source: &m.source,
+            schema: &m.schema,
+            table: &m.name,
+            columns: &columns,
+            sample: m.sample,
+            patterns: &patterns,
+        };
+        quality_jobs::map(&j, &input).map_err(refused)
     }
 
     /// An extract of the mapped source table into bronze (ruling 67).

@@ -38,6 +38,7 @@ pub mod lake_tables;
 pub mod layers;
 pub mod manifest;
 pub mod map_api;
+pub mod map_run;
 pub mod mapping;
 pub mod mapping_field;
 pub mod mapping_rename;

@@ -11,7 +11,9 @@ use axum::Router;
 use contracts::{Module, ModuleRegistry};
 use infrastructure::module_migrations::PgModuleMigrator;
 use quality::bundle::{self, Bundle, BundleSigner, BundleStatement, Expect, RunAs};
+use quality::job_map::Drafts;
 use quality::module::QualityModule;
+use quality::proposal::Alerts;
 use quality::run_report_api::RunReportServices;
 use quality::worker_api::{MachineCaller, MachineTokens};
 use serde_json::{json, Value};
@@ -117,6 +119,14 @@ async fn post(
 
 /// The database, the app's pool and the routes, with `b` pinned to the run.
 async fn fixture(b: &Bundle) -> (testkit::TestDb, sqlx::PgPool, Router) {
+    fixture_with(b, None).await
+}
+
+/// As [`fixture`], a map's proposal published to `drafts`.
+async fn fixture_with(
+    b: &Bundle,
+    drafts: Option<Arc<dyn Drafts>>,
+) -> (testkit::TestDb, sqlx::PgPool, Router) {
     let db = testkit::spawn_test_db().await;
     sqlx::query("CREATE ROLE qd_queue LOGIN PASSWORD 'queue'")
         .execute(&db.pool)
@@ -158,6 +168,8 @@ async fn fixture(b: &Bundle) -> (testkit::TestDb, sqlx::PgPool, Router) {
             RunReportServices {
                 tokens: Arc::new(Tokens),
                 signer: Arc::new(Plain),
+                proposal_alerts: drafts.as_ref().map(|_| alerts()),
+                drafts,
             },
         )
         .router();
@@ -344,4 +356,113 @@ async fn a_records_runs_page_is_kept_for_its_job() {
         quality::records_run::job_of(&app, "0b9c6a1e-0000-4000-8000-000000000099").await,
         Err(quality::job_inputs::FactsError::Refused("no_job"))
     ));
+}
+
+fn alerts() -> Alerts {
+    Alerts {
+        required: "required".into(),
+        unique: "unique".into(),
+        email: "email".into(),
+        mobile: "mobile".into(),
+        document: "document".into(),
+    }
+}
+
+/// What a map run published.
+#[derive(Default)]
+struct Published(std::sync::Mutex<Vec<(String, String)>>);
+
+#[async_trait::async_trait]
+impl Drafts for Published {
+    async fn publish(
+        &self,
+        dataset: &str,
+        mapping: &str,
+        _rules: &[(String, String)],
+    ) -> Result<Option<String>, String> {
+        let mut kept = self.0.lock().unwrap();
+        kept.push((dataset.to_owned(), mapping.to_owned()));
+        Ok(Some("c1".into()))
+    }
+}
+
+/// Ruling 79: a `map` run's row of counts becomes the table's profile, its
+/// dataset's proposal is published and the dataset's first cut opened.
+#[tokio::test]
+async fn a_map_runs_profile_becomes_its_datasets_proposal() {
+    let mut b = bundle("map");
+    let counts = |n: usize| -> Vec<(String, String)> {
+        (0..n)
+            .map(|i| (format!("x{i}"), "bigint".to_owned()))
+            .collect()
+    };
+    b.statements = vec![statement(
+        "profile",
+        Expect::Values {
+            columns: counts(21),
+            max_rows: 1,
+        },
+        RunAs::Job,
+    )];
+    let published = Arc::new(Published::default());
+    let (db, app, router) = fixture_with(&b, Some(published.clone())).await;
+    for sql in [
+        "ALTER TABLE quality.jobs OWNER TO app",
+        "ALTER TABLE quality.sources OWNER TO app",
+        "ALTER TABLE quality.source_tables OWNER TO app",
+        "ALTER TABLE quality.cuts OWNER TO app",
+    ] {
+        sqlx::query(sql).execute(&db.pool).await.unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO quality.sources (name, driver, secrets) VALUES ('core', 'postgres', 'x')",
+    )
+    .execute(&app)
+    .await
+    .unwrap();
+    let tables = json!([{ "schema": "public", "name": "clients", "columns": [
+        { "name": "client_id", "data_type": "integer" },
+        { "name": "email", "data_type": "varchar" }]}]);
+    sqlx::query(
+        "INSERT INTO quality.source_tables (source, job, asked_at, tables)
+         VALUES ('core', gen_random_uuid(), now(), $1)",
+    )
+    .bind(&tables)
+    .execute(&app)
+    .await
+    .unwrap();
+    let parameters = json!({ "source": "core", "table": "clients", "sample": 40 });
+    sqlx::query(
+        "INSERT INTO quality.jobs (id, kind, dataset, parameters) VALUES ($1::uuid, 'map', 'clients', $2)",
+    )
+    .bind(RUN)
+    .bind(&parameters)
+    .execute(&app)
+    .await
+    .unwrap();
+
+    let job = quality::map_run::job_of(&app, RUN).await.unwrap();
+    assert_eq!(
+        (job.schema.as_str(), job.name.as_str(), job.sample),
+        ("public", "clients", 40)
+    );
+    assert_eq!(job.columns.len(), 2);
+
+    // sampled, then per column: empty, distinct, lengths, six patterns.
+    let row = json!([[40, 0, 40, 1, 2, 0, 0, 40, 0, 40, 0, 0, 40, 17, 22, 40, 0, 0, 0, 0, 0]]);
+    let body = json!({ "statement": "profile", "rows": row });
+    assert_eq!(
+        post(&router, "rows", Some("token-runner"), &body).await.0,
+        StatusCode::NO_CONTENT
+    );
+    let kept = published.0.lock().unwrap().clone();
+    assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0].0, "clients");
+    assert!(kept[0].1.contains("email"));
+    let cuts: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM quality.cuts WHERE dataset = 'clients'")
+            .fetch_one(&app)
+            .await
+            .unwrap();
+    assert_eq!(cuts, 1);
 }

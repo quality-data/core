@@ -128,7 +128,7 @@ async fn rows(
         kind,
         bundle: b,
     };
-    hand_over(&api.pool, &taken, &r).await?;
+    hand_over(&api, &taken, &r).await?;
     tracing::info!(
         run = taken.run,
         kind = taken.kind,
@@ -141,9 +141,12 @@ async fn rows(
 
 /// The rows to the run's kind, which keeps them as it keeps a worker's
 /// today. A kind that reads no values takes none.
-async fn hand_over(pool: &PgPool, run: &ValuesRun, rows: &RunRows) -> Result<(), Refusal> {
+async fn hand_over(api: &Api, run: &ValuesRun, rows: &RunRows) -> Result<(), Refusal> {
     if run.kind == crate::records_api::KIND {
-        return crate::records_run::take(pool, run, rows).await;
+        return crate::records_run::take(&api.pool, run, rows).await;
+    }
+    if run.kind == crate::map_run::KIND {
+        return crate::map_run::take(&api.pool, &api.services, run, rows).await;
     }
     tracing::warn!(
         run = run.run,
