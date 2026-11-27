@@ -94,9 +94,9 @@ pub async fn job_of(pool: &PgPool, run: &str) -> Result<MapJob, FactsError> {
     })
 }
 
-/// The table's profile from the row of counts: Trino's listing names no
-/// primary key and no nullability, so every column is taken as nullable
-/// and none as the key.
+/// The table's profile from the row of counts: nullable as the listing
+/// says (ruling 86), nullable when it does not; Trino names no primary
+/// key, so none is the key and the person chooses it when mapping.
 fn profile(job: &MapJob, row: &[Value]) -> Option<TableProfile> {
     if row.len() != 1 + job.columns.len() * PER_COLUMN {
         return None;
@@ -112,7 +112,7 @@ fn profile(job: &MapJob, row: &[Value]) -> Option<TableProfile> {
             ColumnProfile {
                 name: c.name.clone(),
                 declared_type: c.data_type.clone(),
-                nullable: true,
+                nullable: c.nullable.unwrap_or(true),
                 primary_key: false,
                 empty: n(at),
                 distinct: n(at + 1),
@@ -185,6 +185,7 @@ mod tests {
             columns: vec![SourceColumn {
                 name: "email".into(),
                 data_type: "varchar".into(),
+                nullable: Some(false),
             }],
             sample: 40,
             patterns: Patterns::default(),
@@ -199,7 +200,7 @@ mod tests {
         let c = &p.columns[0];
         assert_eq!((c.empty, c.distinct, c.looks.email), (20, 20, 20));
         assert_eq!((c.min_length, c.max_length), (Some(15), Some(18)));
-        assert!(c.nullable && !c.primary_key);
+        assert!(!c.nullable && !c.primary_key);
         let mut short = row.clone();
         short.pop();
         assert!(profile(&job, &short).is_none());

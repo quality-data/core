@@ -65,6 +65,7 @@ impl Runner {
                 tables[i].columns.push(SourceColumn {
                     name: r.get(2)?,
                     data_type: r.get(3)?,
+                    nullable: None,
                 });
             }
         }
@@ -100,6 +101,7 @@ impl Runner {
                     Ok(SourceColumn {
                         name: r.get(0)?,
                         data_type: r.get(1)?,
+                        nullable: None,
                     })
                 })?
                 .collect::<Result<_, _>>()?;

@@ -93,7 +93,7 @@ pub fn source_listing(source: &str, exclude: &[&str]) -> Result<Statement, Error
         system.push(quote_text(&s.to_ascii_lowercase())?);
     }
     Ok(plain(format!(
-        "SELECT table_schema, table_name, column_name, data_type FROM {}.\"information_schema\".\"columns\" \
+        "SELECT table_schema, table_name, column_name, data_type, is_nullable FROM {}.\"information_schema\".\"columns\" \
          WHERE lower(table_schema) NOT IN ({}) \
          ORDER BY table_schema, table_name, ordinal_position",
         quoted(&format!("src_{source}"))?,

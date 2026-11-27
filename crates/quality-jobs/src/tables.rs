@@ -1,7 +1,7 @@
 //! A `tables` job's bundle (decision 0090, ruling 68): a source's listing
 //! read from its Trino catalog's `information_schema` as the source's own
 //! user, with its secrets as extra credentials; the rows (schema, table,
-//! column, Trino type: names only) go back in the report, and the core
+//! column, Trino type, whether nullable (ruling 86): names only) go back in the report, and the core
 //! keeps them in `quality.source_tables`.
 
 use quality::bundle::{Bundle, Expect};
@@ -30,6 +30,7 @@ pub fn tables(job: &Job<'_>, source: &str, system: &[&str]) -> Result<Bundle, Co
                 text("table_name"),
                 text("column_name"),
                 text("data_type"),
+                text("is_nullable"),
             ],
             max_rows: MAX_LISTING_ROWS,
         },
@@ -62,7 +63,7 @@ mod tests {
             (LISTING, RunAs::Job, true)
         );
         assert!(s.sql.starts_with(
-            "SELECT table_schema, table_name, column_name, data_type FROM \"src_core\".\"information_schema\".\"columns\""
+            "SELECT table_schema, table_name, column_name, data_type, is_nullable FROM \"src_core\".\"information_schema\".\"columns\""
         ));
         assert!(s
             .sql

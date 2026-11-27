@@ -277,6 +277,7 @@ async fn a_tables_runs_listing_is_kept_as_its_sources() {
                 ("table_name", "varchar"),
                 ("column_name", "varchar"),
                 ("data_type", "varchar"),
+                ("is_nullable", "varchar"),
             ],
             100,
         )],
@@ -296,9 +297,9 @@ async fn a_tables_runs_listing_is_kept_as_its_sources() {
         "digest": b.digest(),
         "state": "done",
         "statements": [{ "id": "listing", "state": "done", "rows": [
-            ["public", "loans", "loan_id", "bigint"],
-            ["public", "loans", "amount", "decimal(12,2)"],
-            ["public", "offices", "code", "varchar"]
+            ["public", "loans", "loan_id", "bigint", "NO"],
+            ["public", "loans", "amount", "decimal(12,2)", "YES"],
+            ["public", "offices", "code", "varchar", null]
         ]}]
     });
     let req = Request::post(format!("/internal/quality/v1/runs/{run}/report"))
@@ -317,8 +318,8 @@ async fn a_tables_runs_listing_is_kept_as_its_sources() {
         tables,
         json!([
             {"schema": "public", "name": "loans", "columns": [
-                {"name": "loan_id", "data_type": "bigint"},
-                {"name": "amount", "data_type": "decimal(12,2)"}]},
+                {"name": "loan_id", "data_type": "bigint", "nullable": false},
+                {"name": "amount", "data_type": "decimal(12,2)", "nullable": true}]},
             {"schema": "public", "name": "offices", "columns": [
                 {"name": "code", "data_type": "varchar"}]}
         ])

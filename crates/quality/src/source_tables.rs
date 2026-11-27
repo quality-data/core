@@ -36,6 +36,11 @@ pub struct SourceColumn {
     /// name from a Trino `tables` job (`integer`, `decimal(14,2)`; decision
     /// 0090, ruling 68), DuckDB's from an older listing.
     pub data_type: String,
+    /// Whether the source lets it be empty, as Trino's listing says
+    /// (decision 0090, ruling 86); none from an older listing. No listing
+    /// names a primary key: the person chooses it when mapping.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nullable: Option<bool>,
 }
 
 /// What a `tables` job reports.
@@ -136,6 +141,11 @@ pub(crate) fn listing_from_rows(source: &str, rows: &[Vec<serde_json::Value>]) -
         let column = SourceColumn {
             name: text(2),
             data_type: text(3),
+            nullable: match text(4).as_str() {
+                "YES" => Some(true),
+                "NO" => Some(false),
+                _ => None,
+            },
         };
         let full = tables.len() == MAX_TABLES;
         match tables.last_mut() {
@@ -367,6 +377,7 @@ mod tests {
             columns: vec![SourceColumn {
                 name: "id".into(),
                 data_type: "INTEGER".into(),
+                nullable: None,
             }],
         }
     }
