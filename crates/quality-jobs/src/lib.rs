@@ -22,7 +22,7 @@ pub use evaluate::{
 pub use extract::{extract, ExtractInput};
 pub use gold::{retract, slas, RetractInput, SlasInput};
 pub use map::{map, MapInput, PROFILE};
-pub use prepare::{prepare, PrepareInput};
+pub use prepare::{prepare, PrepareInput, MAINT_CATALOG};
 pub use records::{records, RecordsInput, PAGE_READ};
 pub use rule_test::{rule_test, RuleTestInput, COUNTS};
 pub use tables::{tables, LISTING, MAX_LISTING_ROWS};

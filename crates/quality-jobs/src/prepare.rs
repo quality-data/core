@@ -12,6 +12,10 @@ use quality_rules_trino::TablePath;
 use crate::steps::Steps;
 use crate::{CompileError, Job};
 
+/// The catalog a prepare's statements name: the maintenance catalog over
+/// the same warehouse (point 6.4), the only one `job_maint_<d>` is granted.
+pub const MAINT_CATALOG: &str = "lake_maint";
+
 /// What a prepare reads: the mapping at the catalog's `main`, the
 /// dataset's two tables and the source's listed columns.
 #[derive(Debug, Clone)]
@@ -24,12 +28,17 @@ pub struct PrepareInput<'a> {
     pub source_columns: &'a [(String, String)],
 }
 
-/// The prepare's bundle: `bronze`, `bronze_<n>`, `silver`, `silver_<n>`.
+/// The prepare's bundle: `bronze`, `bronze_<n>`, `silver`, `silver_<n>`,
+/// each table named in [`MAINT_CATALOG`] whatever catalog it was given.
 pub fn prepare(job: &Job<'_>, input: &PrepareInput<'_>) -> Result<Bundle, CompileError> {
     job.dataset()?;
+    let on_maint = |t: &TablePath| TablePath {
+        catalog: MAINT_CATALOG.to_owned(),
+        ..t.clone()
+    };
     let statements = trino::prepare(
-        &input.bronze,
-        &input.silver,
+        &on_maint(&input.bronze),
+        &on_maint(&input.silver),
         input.mapping,
         input.source_columns,
     )?;
@@ -92,6 +101,8 @@ mod tests {
             assert_eq!(s.run_as, RunAs::Job);
             assert_eq!(s.expects, Expect::Done);
             assert!(s.only_if_rows.is_none());
+            assert!(s.sql.contains("\"lake_maint\"."), "{}", s.id);
+            assert!(!s.sql.contains("\"lake\"."), "{}", s.id);
         }
         let none = Job {
             dataset: None,
