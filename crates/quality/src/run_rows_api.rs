@@ -23,6 +23,9 @@ use crate::run_report_api::{takes, RunReportServices};
 #[serde(deny_unknown_fields)]
 pub struct RunRows {
     pub statement: String,
+    /// The answer's columns, for a read that declares none (ruling 84).
+    #[serde(default)]
+    pub columns: Option<Vec<String>>,
     pub rows: Vec<Vec<Value>>,
 }
 
@@ -30,6 +33,7 @@ impl std::fmt::Debug for RunRows {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RunRows")
             .field("statement", &self.statement)
+            .field("columns", &self.columns.as_ref().map(Vec::len))
             .field("rows", &self.rows.len())
             .finish()
     }
@@ -71,20 +75,36 @@ pub(crate) fn internal(e: impl std::fmt::Display) -> Refusal {
 /// run has reported.
 type PinnedRow = (String, String, String, bool);
 
-/// Whether `rows` fit the values read `id` of `b`: its columns, each value
-/// of its type (or null), at most its rows.
-fn values_fit(b: &Bundle, id: &str, rows: &[Vec<Value>]) -> Result<(), &'static str> {
+/// The most columns an answer that declares its own may have.
+const MAX_ANSWER_COLUMNS: usize = 1_000;
+
+/// Whether `r` fit the values read it names in `b`: its columns (declared
+/// by the bundle, or by the answer for a text read), each value of its
+/// type (or null), at most its rows.
+fn values_fit(b: &Bundle, r: &RunRows) -> Result<(), &'static str> {
     let s = b
         .statements
         .iter()
-        .find(|s| s.id == id)
+        .find(|s| s.id == r.statement)
         .ok_or("no_such_statement")?;
-    let Expect::Values { columns, max_rows } = &s.expects else {
-        return Err("not_a_values_read");
+    let (types, max_rows): (Vec<&str>, u64) = match (&s.expects, &r.columns) {
+        (Expect::Values { columns, max_rows }, None) => {
+            (columns.iter().map(|(_, t)| t.as_str()).collect(), *max_rows)
+        }
+        (Expect::Text { max_rows }, Some(names))
+            if !names.is_empty()
+                && names.len() <= MAX_ANSWER_COLUMNS
+                && names.iter().all(|n| n.chars().count() <= 128) =>
+        {
+            (vec!["varchar"; names.len()], *max_rows)
+        }
+        (Expect::Values { .. } | Expect::Text { .. }, _) => return Err("rows_not_allowed"),
+        _ => return Err("not_a_values_read"),
     };
-    let fit = u64::try_from(rows.len()).is_ok_and(|n| n <= *max_rows)
-        && rows.iter().all(|r| {
-            r.len() == columns.len() && r.iter().zip(columns).all(|(v, (_, ty))| takes(ty, v))
+    let rows = &r.rows;
+    let fit = u64::try_from(rows.len()).is_ok_and(|n| n <= max_rows)
+        && rows.iter().all(|row| {
+            row.len() == types.len() && row.iter().zip(&types).all(|(v, ty)| takes(ty, v))
         });
     if fit {
         Ok(())
@@ -121,8 +141,7 @@ async fn rows(
     }
     let b = bundle::verify(api.services.signer.as_ref(), &token, &run, &digest)
         .map_err(|_| internal("the pinned bundle does not verify"))?;
-    values_fit(&b, &r.statement, &r.rows)
-        .map_err(|why| refused(StatusCode::UNPROCESSABLE_ENTITY, why))?;
+    values_fit(&b, &r).map_err(|why| refused(StatusCode::UNPROCESSABLE_ENTITY, why))?;
     let taken = ValuesRun {
         run,
         kind,
@@ -144,6 +163,9 @@ async fn rows(
 async fn hand_over(api: &Api, run: &ValuesRun, rows: &RunRows) -> Result<(), Refusal> {
     if run.kind == crate::records_api::KIND {
         return crate::records_run::take(&api.pool, run, rows).await;
+    }
+    if run.kind == crate::console_api::KIND {
+        return crate::console_run::take(&api.pool, run, rows).await;
     }
     if run.kind == crate::test_rule_run::KIND {
         return crate::test_rule_run::take(&api.pool, run, rows).await;
@@ -170,9 +192,13 @@ mod tests {
     fn debug_names_the_statement_and_counts_the_rows() {
         let r = RunRows {
             statement: "page".into(),
+            columns: None,
             rows: vec![vec![json!("Synthetic Name")]],
         };
         let shown = format!("{r:?}");
-        assert_eq!(shown, "RunRows { statement: \"page\", rows: 1 }");
+        assert_eq!(
+            shown,
+            "RunRows { statement: \"page\", columns: None, rows: 1 }"
+        );
     }
 }

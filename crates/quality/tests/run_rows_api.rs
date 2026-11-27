@@ -547,3 +547,73 @@ async fn a_test_rule_runs_reads_merge_into_its_report() {
         refusal("rows_invalid")
     );
 }
+
+/// Ruling 84: a console run's text read comes with its columns; its result
+/// is kept as today's, and a failed run keeps only its error's class.
+#[tokio::test]
+async fn a_console_runs_result_comes_with_its_columns() {
+    let mut b = bundle("query");
+    b.statements = vec![statement(
+        "result",
+        Expect::Text { max_rows: 201 },
+        RunAs::Job,
+    )];
+    let (db, app, router) = fixture(&b).await;
+    for sql in [
+        "ALTER TABLE quality.jobs OWNER TO app",
+        "ALTER TABLE quality.console_results OWNER TO app",
+    ] {
+        sqlx::query(sql).execute(&db.pool).await.unwrap();
+    }
+    sqlx::query("INSERT INTO quality.jobs (id, kind, parameters) VALUES ($1::uuid, 'query', $2)")
+        .bind(RUN)
+        .bind(json!({ "sql": "SELECT 1", "by": "someone", "datasets": ["loans"] }))
+        .execute(&app)
+        .await
+        .unwrap();
+    let job = quality::console_run::job_of(&app, RUN).await.unwrap();
+    assert_eq!(job.datasets, ["loans"]);
+    assert!(!format!("{job:?}").contains("SELECT"));
+    let runner = Some("token-runner");
+    let no_columns = json!({ "statement": "result", "rows": [["1"]] });
+    assert_eq!(
+        post(&router, "rows", runner, &no_columns).await,
+        refusal("rows_not_allowed")
+    );
+    let wide = json!({ "statement": "result", "columns": ["n"], "rows": [["1", "2"]] });
+    assert_eq!(
+        post(&router, "rows", runner, &wide).await,
+        refusal("rows_not_allowed")
+    );
+    let good = json!({ "statement": "result", "columns": ["name", "n"],
+        "rows": [["Name Example", "1"], [null, "2"]] });
+    assert_eq!(
+        post(&router, "rows", runner, &good).await.0,
+        StatusCode::NO_CONTENT
+    );
+    let kept: Value =
+        sqlx::query_scalar("SELECT result FROM quality.console_results WHERE job = $1::uuid")
+            .bind(RUN)
+            .fetch_one(&app)
+            .await
+            .unwrap();
+    assert_eq!(
+        kept,
+        json!({ "columns": ["name", "n"], "rows": [["Name Example", "1"], [null, "2"]],
+            "more": false, "error": null })
+    );
+    let report = json!({ "digest": b.digest(), "state": "failed",
+        "statements": [{ "id": "result", "state": "failed" }], "error_class": "syntax" });
+    assert_eq!(
+        post(&router, "report", runner, &report).await.0,
+        StatusCode::NO_CONTENT
+    );
+    let kept: Value = sqlx::query_scalar(
+        "SELECT result->'error' FROM quality.console_results WHERE job = $1::uuid",
+    )
+    .bind(RUN)
+    .fetch_one(&app)
+    .await
+    .unwrap();
+    assert_eq!(kept, json!("syntax"));
+}

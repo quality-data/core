@@ -138,6 +138,12 @@ impl JobCompiler for TrinoJobs {
             "records" => self.records(j, job).await,
             "map" => self.map(j, job).await,
             "test_rule" => self.test_rule(j).await,
+            "query" => {
+                let c = quality::console_run::job_of(&self.pool, j.run)
+                    .await
+                    .map_err(facts)?;
+                quality_jobs::console(&j, &c.sql).map_err(refused)
+            }
             _ => Err(CompileRefused("kind_not_compiled")),
         }
     }

@@ -44,6 +44,11 @@ pub enum Expect {
         columns: Vec<(String, String)>,
         max_rows: u64,
     },
+    /// A values read whose columns come with its answer, every value text
+    /// (ruling 84: the console's statement, whose columns are not known
+    /// before it runs); at most `max_rows`, never more than
+    /// [`MAX_VALUES_ROWS`], posted on the same values route.
+    Text { max_rows: u64 },
 }
 
 /// The most rows a values read may give: a page of a source's records and
@@ -67,7 +72,7 @@ impl Expect {
 
     /// Whether it is a values read.
     pub fn is_values(&self) -> bool {
-        matches!(self, Self::Values { .. })
+        matches!(self, Self::Values { .. } | Self::Text { .. })
     }
 }
 
@@ -205,6 +210,9 @@ fn values_checked(s: &BundleStatement) -> bool {
             !columns.is_empty()
                 && (1..=MAX_VALUES_ROWS).contains(max_rows)
                 && s.run_as == RunAs::Job
+        }
+        Expect::Text { max_rows } => {
+            (1..=MAX_VALUES_ROWS).contains(max_rows) && s.run_as == RunAs::Job
         }
         _ => true,
     }
@@ -396,6 +404,12 @@ mod tests {
         assert!(refused(&|s| s.expects = values(MAX_VALUES_ROWS + 1)));
         assert!(refused(&|s| s.expects = values(0)));
         assert!(refused(&|s| s.run_as = RunAs::Report));
+        assert!(!refused(&|s| s.expects = Expect::Text { max_rows: 201 }));
+        assert!(refused(&|s| s.expects = Expect::Text { max_rows: 0 }));
+        assert!(refused(&|s| {
+            s.expects = Expect::Text { max_rows: 201 };
+            s.run_as = RunAs::Report;
+        }));
         assert!(refused(&|s| {
             s.expects = Expect::Values {
                 columns: vec![],

@@ -36,6 +36,9 @@ pub enum TrinoUser {
     /// Reads its dataset's silver and bronze only: a rule test's records
     /// (point 7.4, ruling 83).
     Sample,
+    /// Reads the bronze, silver and gold of the datasets its asker may
+    /// view, for one run only: a console statement (ruling 84).
+    Console,
     /// Reads one source's catalog: its listing (a `tables` job), a page of
     /// a table's records (`records`) or a table's profile (`map`).
     Source,
@@ -49,6 +52,7 @@ impl TrinoUser {
             Self::Maint => "maint",
             Self::Extract => "extract",
             Self::Sample => "sample",
+            Self::Console => "console",
             Self::Source => "source",
         }
     }
@@ -63,6 +67,7 @@ fn users_of(kind: &str) -> &'static [TrinoUser] {
         }
         "prepare" => &[TrinoUser::Maint],
         "test_rule" => &[TrinoUser::Sample, TrinoUser::Report],
+        "query" => &[TrinoUser::Console],
         "extract" => &[TrinoUser::Extract, TrinoUser::Report],
         "tables" | "records" | "map" => &[TrinoUser::Source],
         _ => &[],
@@ -166,10 +171,10 @@ async fn token_of(
     let (kind, dataset, source) =
         pinned.ok_or_else(|| refused(StatusCode::NOT_FOUND, "no_bundle"))?;
     // A source's user is over its source; every other over the dataset.
-    let target = if ask.user == TrinoUser::Source {
-        source
-    } else {
-        dataset
+    let target = match ask.user {
+        TrinoUser::Source => source,
+        TrinoUser::Console => Some(crate::console_run::console_target(job)),
+        _ => dataset,
     };
     let dataset = target
         .filter(|_| users_of(&kind).contains(&ask.user))

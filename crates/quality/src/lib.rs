@@ -10,6 +10,7 @@ pub mod chart_api;
 pub mod charts;
 pub mod console;
 pub mod console_api;
+pub mod console_run;
 pub mod cut_api;
 pub mod cuts;
 pub mod dataset_api;

@@ -216,6 +216,9 @@ async fn report(
     if kept == 0 {
         return Err(refused(StatusCode::CONFLICT, "already_reported"));
     }
+    if kind == crate::console_api::KIND && r.state == RunState::Failed {
+        crate::console_run::failed(&api.pool, &run, r.error_class.as_deref()).await?;
+    }
     if kind == "tables" && r.state == RunState::Done {
         listed(&mut tx, &run, source.as_deref(), &r).await?;
     }

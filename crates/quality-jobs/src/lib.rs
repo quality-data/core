@@ -3,6 +3,7 @@
 //! a job runner submits. Pure: the server gathers the input (PostgreSQL,
 //! the catalog, the sequence) and signs what this returns.
 
+mod console;
 mod evaluate;
 mod extract;
 mod gold;
@@ -14,6 +15,7 @@ mod steps;
 mod tables;
 mod test_rule;
 
+pub use console::console;
 pub use evaluate::{
     evaluate, AtSnapshots, EvaluateInput, ReferencePin, INDEX_RULES, INDEX_SUMMARY,
 };
