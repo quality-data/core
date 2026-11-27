@@ -19,9 +19,10 @@ use sqlx::PgPool;
 use crate::bundle::{self, Bundle, BundleSigner};
 use crate::worker_api::MachineTokens;
 
-/// The audience a job runner asks its machine token for: only the clients
-/// registered with it (the module that runs the job runners) get one.
-pub const AUDIENCE: &str = "quality-jobs";
+/// The audience every call to `/internal/quality/v1/*` asks its machine
+/// token for: the core's own (decision 0090, ruling 97), as the platform's
+/// routes take it.
+pub const AUDIENCE: &str = "core";
 
 /// What the job runner asks for: the run's job as the operator handed it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

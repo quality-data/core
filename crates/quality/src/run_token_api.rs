@@ -105,7 +105,8 @@ pub trait TrinoTokens: Send + Sync {
 /// What the route uses besides the database.
 #[derive(Clone)]
 pub struct RunTokenServices {
-    /// Machine tokens for `quality-jobs`, as the bundle route takes them.
+    /// Machine tokens for the core's audience, as the bundle route takes
+    /// them (ruling 97).
     pub tokens: Arc<dyn MachineTokens>,
     pub issuer: Arc<dyn TrinoTokens>,
     pub log: Arc<dyn IssueLog>,
