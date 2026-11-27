@@ -11,7 +11,7 @@ use quality_rules::check::Compiled;
 use quality_rules::sql::Tables;
 use quality_rules_trino::{self as trino, Cut, TablePath, SAMPLE_HEAD};
 
-use crate::evaluate::pin;
+use crate::evaluate::{pin, ReferencePin};
 use crate::steps::Steps;
 use crate::{CompileError, Job};
 
@@ -20,6 +20,9 @@ use crate::{CompileError, Job};
 pub struct TestRuleInput<'a> {
     pub rules: &'a [Compiled],
     pub tables: &'a Tables,
+    /// The referenced datasets' silver, pinned at the same cut (ruling
+    /// 105).
+    pub references: &'a [ReferencePin<'a>],
     pub silver: TablePath,
     /// The cut's accepted load (`None`: rows from before loads).
     pub load: Option<&'a str>,
@@ -48,6 +51,20 @@ pub fn test_rule(job: &Job<'_>, input: &TestRuleInput<'_>) -> Result<Bundle, Com
         &cut,
         input.load,
     )?;
+    let mut tables = input.tables.clone();
+    for (i, r) in input.references.iter().enumerate() {
+        let read = pin(
+            &mut steps,
+            &r.silver,
+            &format!("ref_{i}_snapshot"),
+            &cut,
+            r.load,
+        )?;
+        tables
+            .get_mut(r.name)
+            .ok_or(CompileError::Incomplete("reference"))?
+            .pinned = Some(read);
+    }
     for (i, rule) in input.rules.iter().enumerate() {
         let fields = trino::shown_fields(rule, input.key, input.columns);
         let mut columns: Vec<(String, String)> = SAMPLE_HEAD
@@ -58,7 +75,7 @@ pub fn test_rule(job: &Job<'_>, input: &TestRuleInput<'_>) -> Result<Bundle, Com
         let read = trino::rule_samples(
             &silver,
             rule,
-            input.tables,
+            &tables,
             &cut,
             &fields,
             input.key.len(),
@@ -94,6 +111,7 @@ mod tests {
         let input = TestRuleInput {
             rules: &rules,
             tables: &Tables::new(),
+            references: &[],
             silver: TablePath {
                 catalog: "lake".into(),
                 namespace: "loans_silver".into(),
@@ -133,5 +151,65 @@ mod tests {
             ..input
         };
         assert!(test_rule(&job, &none).is_err());
+    }
+
+    #[test]
+    fn a_referenced_datasets_silver_is_pinned_at_the_same_cut() {
+        let yaml = "dataset: loans\nrules:\n  \
+                    - { id: R1, field: Code, check: required, severity: major, alert: a }\n";
+        let mut schema = Schema::default();
+        schema.fields.insert("Code".into(), FieldType::Text);
+        let (rules, _) = compile(&quality_rules::parse(yaml).unwrap(), &schema);
+        let mut tables = Tables::new();
+        tables.insert(
+            "advisors".into(),
+            quality_rules::sql::Table {
+                path: vec!["lake".into(), "advisors_silver".into(), "advisors".into()],
+                filter: None,
+                pinned: None,
+            },
+        );
+        let silver = |ns: &str, t: &str| TablePath {
+            catalog: "lake".into(),
+            namespace: ns.into(),
+            table: t.into(),
+        };
+        let refs = [ReferencePin {
+            name: "advisors",
+            silver: silver("advisors_silver", "advisors"),
+            load: Some("l-1"),
+        }];
+        let input = TestRuleInput {
+            rules: &rules,
+            tables: &tables,
+            references: &refs,
+            silver: silver("loans_silver", "loans"),
+            load: None,
+            key: &[],
+            columns: &[],
+            each: 10,
+        };
+        let job = Job {
+            run: "0b9c6a1e-0000-4000-8000-000000000082",
+            kind: "test_rule",
+            dataset: Some("loans"),
+            cut: Some("2026-10-31"),
+            attempt: 1,
+            run_seq: None,
+            catalog_commit: None,
+        };
+        let b = test_rule(&job, &input).unwrap();
+        assert!(b.well_formed());
+        let ids: Vec<&str> = b.statements.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(ids, ["silver_snapshot", "ref_0_snapshot", "rule_0"]);
+        let unknown = [ReferencePin {
+            name: "nobody",
+            ..refs[0].clone()
+        }];
+        let input = TestRuleInput {
+            references: &unknown,
+            ..input
+        };
+        assert!(test_rule(&job, &input).is_err());
     }
 }

@@ -223,9 +223,19 @@ impl TrinoJobs {
             catalog_commit: Some(&f.commit),
             ..j
         };
+        let references: Vec<ReferencePin<'_>> = f
+            .references
+            .iter()
+            .map(|r| ReferencePin {
+                name: &r.name,
+                silver: lake(r.namespace.clone(), r.table.clone()),
+                load: r.load.as_deref(),
+            })
+            .collect();
         let input = TestRuleInput {
             rules: &f.rules,
             tables: &f.tables,
+            references: &references,
             silver: lake(ns, table),
             load: f.load.as_deref(),
             key: &f.mapping.key,

@@ -210,7 +210,7 @@ async fn facts_of(
 }
 
 /// The cut's row: `None` if it has none, else its extraction (if any).
-async fn cut_load(
+pub(crate) async fn cut_load(
     pool: &PgPool,
     dataset: &str,
     cut: NaiveDate,

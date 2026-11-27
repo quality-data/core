@@ -12,7 +12,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::catalog::Catalog;
-use crate::job_inputs::{references, FactsError};
+use crate::job_inputs::{cut_load, references, FactsError, ReferenceFacts};
 use crate::mapping::Mapping;
 use crate::rule_test::{FailGroup, FieldValue, RuleTested, TestReport, TestedRecord, EACH};
 use crate::run_rows_api::{internal, refused, Refusal, RunRows, ValuesRun};
@@ -39,6 +39,9 @@ pub struct TestRuleFacts {
     /// The rules asked: one (and its parts), or every rule of the file.
     pub rules: Vec<Compiled>,
     pub tables: Tables,
+    /// Each referenced dataset's silver and the load of the same cut,
+    /// read pinned as an evaluate reads them (ruling 105).
+    pub references: Vec<ReferenceFacts>,
     /// The cut's extraction, the load its silver rows carry.
     pub load: Option<String>,
     /// Fields shown besides the key and those a rule reads.
@@ -92,14 +95,19 @@ pub async fn facts_of(
         .into_iter()
         .filter(|r| only.is_none_or(|id| r.id == id || r.id.starts_with(&format!("{id}."))))
         .collect();
-    let load: Option<Option<String>> = sqlx::query_scalar(
-        "SELECT extract_job::text FROM quality.cuts WHERE dataset = $1 AND cut = $2",
-    )
-    .bind(&dataset)
-    .bind(cut)
-    .fetch_optional(pool)
-    .await
-    .map_err(failed)?;
+    let load = cut_load(pool, &dataset, cut).await?;
+    let mut pins = Vec::new();
+    for (name, (namespace, table, other)) in referenced {
+        let load = cut_load(pool, &other, cut)
+            .await?
+            .ok_or(FactsError::Refused("reference_cut_missing"))?;
+        pins.push(ReferenceFacts {
+            name,
+            namespace,
+            table,
+            load,
+        });
+    }
     let columns = p
         .get("columns")
         .and_then(|c| serde_json::from_value(c.clone()).ok())
@@ -111,6 +119,7 @@ pub async fn facts_of(
         mapping,
         rules,
         tables,
+        references: pins,
         load: load.flatten(),
         columns,
         each: p.get("each").and_then(Value::as_u64).unwrap_or(EACH as u64),
