@@ -68,6 +68,7 @@ pub mod schedule;
 pub mod schedule_api;
 pub mod schedule_store;
 pub mod scheduler;
+pub mod schedules_api;
 pub mod sla_api;
 pub mod source;
 pub mod source_api;

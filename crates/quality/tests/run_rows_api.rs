@@ -120,13 +120,14 @@ async fn post(
 
 /// The database, the app's pool and the routes, with `b` pinned to the run.
 async fn fixture(b: &Bundle) -> (testkit::TestDb, sqlx::PgPool, Router) {
-    fixture_with(b, None).await
+    fixture_with(b, None, None).await
 }
 
 /// As [`fixture`], a map's proposal published to `drafts`.
 async fn fixture_with(
     b: &Bundle,
     drafts: Option<Arc<dyn Drafts>>,
+    catalog: Option<Arc<dyn quality::catalog::Catalog>>,
 ) -> (testkit::TestDb, sqlx::PgPool, Router) {
     let db = testkit::spawn_test_db().await;
     sqlx::query("CREATE ROLE qd_queue LOGIN PASSWORD 'queue'")
@@ -171,6 +172,7 @@ async fn fixture_with(
                 signer: Arc::new(Plain),
                 proposal_alerts: drafts.as_ref().map(|_| alerts()),
                 drafts,
+                catalog,
             },
         )
         .router();
@@ -406,7 +408,7 @@ async fn a_map_runs_profile_becomes_its_datasets_proposal() {
         RunAs::Job,
     )];
     let published = Arc::new(Published::default());
-    let (db, app, router) = fixture_with(&b, Some(published.clone())).await;
+    let (db, app, router) = fixture_with(&b, Some(published.clone()), None).await;
     for sql in [
         "ALTER TABLE quality.jobs OWNER TO app",
         "ALTER TABLE quality.sources OWNER TO app",
@@ -617,4 +619,144 @@ async fn a_console_runs_result_comes_with_its_columns() {
     .await
     .unwrap();
     assert_eq!(kept, json!("syntax"));
+}
+
+struct Main;
+
+#[async_trait::async_trait]
+impl quality::catalog::Catalog for Main {
+    async fn snapshot(
+        &self,
+        dataset: &str,
+    ) -> Result<Option<quality::catalog::CatalogSnapshot>, String> {
+        Ok(
+            (dataset == "loans").then(|| quality::catalog::CatalogSnapshot {
+                commit: "c1".into(),
+                mapping:
+                    "dataset: loans\nsource: loans\nfields:\n  Code: { column: code, type: text }\n"
+                        .into(),
+                rules: vec![],
+                others: vec![],
+            }),
+        )
+    }
+    async fn mappings(&self) -> Result<Vec<quality::catalog::DatasetMapping>, String> {
+        Ok(vec![])
+    }
+}
+
+/// Ruling 92(a): the orchestrator lists the schedules and asks a fire's
+/// steps; the same fire gets the same answer, a blocked cut none.
+#[tokio::test]
+async fn a_schedules_fire_answers_its_chain_once() {
+    let b = bundle("evaluate");
+    let (db, app, router) = fixture_with(&b, None, Some(Arc::new(Main))).await;
+    for sql in [
+        "ALTER TABLE quality.schedules OWNER TO app",
+        "ALTER TABLE quality.schedule_fires OWNER TO app",
+        "ALTER TABLE quality.cuts OWNER TO app",
+        "ALTER TABLE quality.jobs OWNER TO app",
+    ] {
+        sqlx::query(sql).execute(&db.pool).await.unwrap();
+    }
+    let id: uuid::Uuid = sqlx::query_scalar(
+        "INSERT INTO quality.schedules (cron, timezone, fires, dataset, rerun)
+         VALUES ('0 2 * * *', 'UTC', 'cut', 'loans', 'block') RETURNING id",
+    )
+    .fetch_one(&app)
+    .await
+    .unwrap();
+    assert_listed(&router, id).await;
+    let fire = |at: &str| {
+        let body = json!({ "fire_at": at }).to_string();
+        Request::post(format!("/internal/quality/v1/schedules/{id}/fires"))
+            .header("content-type", "application/json")
+            .header("authorization", "Bearer token-orchestrator")
+            .body(Body::from(body))
+            .unwrap()
+    };
+    let answer = |res: axum::response::Response| async move {
+        let status = res.status();
+        let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (
+            status,
+            serde_json::from_slice::<Value>(&bytes).unwrap_or(Value::Null),
+        )
+    };
+    let (status, first) = answer(
+        router
+            .clone()
+            .oneshot(fire("2026-10-31T02:00:00Z"))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let steps = first["steps"].as_array().unwrap();
+    let kinds: Vec<&str> = steps.iter().map(|s| s["kind"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["prepare", "extract", "evaluate"]);
+    assert_eq!(steps[0]["setup"]["key"], "dataset:loans");
+    assert_eq!(
+        steps[2]["parameters"],
+        json!({ "dataset": "loans", "cut": "2026-10-31" })
+    );
+    let (_, again) = answer(
+        router
+            .clone()
+            .oneshot(fire("2026-10-31T02:00:00Z"))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(again, first, "the same fire, the same answer");
+    // Another fire of the same day: the cut is there, the schedule blocks.
+    let (_, blocked) = answer(
+        router
+            .clone()
+            .oneshot(fire("2026-10-31T03:00:00Z"))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(blocked, json!({ "steps": [] }));
+    let gone = Request::post(format!(
+        "/internal/quality/v1/schedules/{}/fires",
+        uuid::Uuid::nil()
+    ))
+    .header("content-type", "application/json")
+    .header("authorization", "Bearer token-orchestrator")
+    .body(Body::from(
+        json!({ "fire_at": "2026-10-31T02:00:00Z" }).to_string(),
+    ))
+    .unwrap();
+    assert_eq!(
+        router.clone().oneshot(gone).await.unwrap().status(),
+        StatusCode::NOT_FOUND
+    );
+}
+
+/// The schedules as the orchestrator lists them: `id` alone.
+async fn assert_listed(router: &Router, id: uuid::Uuid) {
+    let get = |token: &'static str| {
+        Request::get("/internal/quality/v1/schedules")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap()
+    };
+    let res = router
+        .clone()
+        .oneshot(get("token-orchestrator"))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let listed: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        listed,
+        json!({ "schedules": [{ "id": id, "cron": "0 2 * * *", "timezone": "UTC", "enabled": true }] })
+    );
 }

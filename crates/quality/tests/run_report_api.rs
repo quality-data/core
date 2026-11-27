@@ -178,6 +178,7 @@ async fn fixture() -> (testkit::TestDb, sqlx::PgPool, Router, Bundle) {
                 signer: Arc::new(Plain),
                 drafts: None,
                 proposal_alerts: None,
+                catalog: None,
             },
         )
         .router();

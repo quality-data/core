@@ -80,6 +80,9 @@ pub struct RunReportServices {
     /// (decision 0090, ruling 79); without them a map's profile waits.
     pub drafts: Option<Arc<dyn crate::job_map::Drafts>>,
     pub proposal_alerts: Option<crate::proposal::Alerts>,
+    /// The catalog's `main`, whose mappings a schedule's fire fingerprints
+    /// (ruling 92(c)).
+    pub catalog: Option<Arc<dyn crate::catalog::Catalog>>,
 }
 
 impl std::fmt::Debug for RunReportServices {
@@ -95,7 +98,8 @@ struct Api {
 }
 
 /// `POST /internal/quality/v1/runs/{run}/report`, and the values reads'
-/// `POST …/runs/{run}/rows` ([`crate::run_rows_api`]).
+/// `POST …/runs/{run}/rows` ([`crate::run_rows_api`]), and the schedules
+/// the orchestrator fires ([`crate::schedules_api`]).
 pub fn routes(pool: PgPool, services: RunReportServices) -> Router {
     Router::new()
         .route("/internal/quality/v1/runs/{run}/report", post(report))
@@ -103,7 +107,8 @@ pub fn routes(pool: PgPool, services: RunReportServices) -> Router {
             pool: pool.clone(),
             services: services.clone(),
         })
-        .merge(crate::run_rows_api::routes(pool, services))
+        .merge(crate::run_rows_api::routes(pool.clone(), services.clone()))
+        .merge(crate::schedules_api::routes(pool, services))
 }
 
 type Refusal = (StatusCode, Json<Value>);

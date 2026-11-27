@@ -81,6 +81,7 @@ pub(crate) fn serving(
             signer: Arc::new(ProviderBundles(p)),
             drafts: drafts.clone(),
             proposal_alerts: Some(proposal_alerts(Language::Es)),
+            catalog: catalog.clone(),
         })
     });
     let run_sources = provider.clone().zip(catalog.clone()).map(|(p, catalog)| {
