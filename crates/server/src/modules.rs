@@ -77,7 +77,7 @@ pub(crate) fn serving(
     let run_reports = provider.clone().and_then(|p| {
         p.sign_es256(quality::bundle::BUNDLE_TYP, "{}")?;
         Some(quality::run_report_api::RunReportServices {
-            tokens: Arc::new(BundleTokens(p.clone())),
+            tokens: internal_tokens(p.clone(), pool),
             signer: Arc::new(ProviderBundles(p)),
             drafts: drafts.clone(),
             proposal_alerts: Some(proposal_alerts(Language::Es)),
@@ -86,7 +86,7 @@ pub(crate) fn serving(
     });
     let run_sources = provider.clone().zip(catalog.clone()).map(|(p, catalog)| {
         quality::run_source_api::RunSourceServices {
-            tokens: Arc::new(BundleTokens(p)),
+            tokens: internal_tokens(p, pool),
             sealer: Arc::new(BoxSealer(secret_box.clone())),
             catalog,
             log: Arc::new(Issues(Arc::new(PgAuditRepository::new(pool.clone())))),
@@ -329,7 +329,7 @@ fn bundle_services(
 ) -> Option<BundleServices> {
     p.sign_es256(quality::bundle::BUNDLE_TYP, "{}")?;
     Some(BundleServices {
-        tokens: Arc::new(BundleTokens(p.clone())),
+        tokens: internal_tokens(p.clone(), &pool),
         signer: Arc::new(ProviderBundles(p)),
         compiler: Arc::new(crate::job_compiler::TrinoJobs {
             pool,
@@ -345,12 +345,51 @@ fn bundle_services(
 fn run_token_services(p: AuthorizationServer, pool: PgPool) -> Option<RunTokenServices> {
     p.sign_es256("at+jwt", "{}")?;
     Some(RunTokenServices {
-        tokens: Arc::new(BundleTokens(p.clone())),
+        tokens: internal_tokens(p.clone(), &pool),
         issuer: Arc::new(crate::trino_tokens::ProviderTrinoTokens::new(
             p,
             pool.clone(),
         )),
         log: Arc::new(Issues(Arc::new(PgAuditRepository::new(pool)))),
+    })
+}
+
+/// The module that provides orchestration, kept from the installed modules
+/// (decision 0090, ruling 104), read again every minute.
+fn orchestration(pool: &PgPool) -> quality::orchestrator_callers::Provider {
+    static PROVIDER: std::sync::OnceLock<quality::orchestrator_callers::Provider> =
+        std::sync::OnceLock::new();
+    PROVIDER
+        .get_or_init(|| {
+            let provider = quality::orchestrator_callers::Provider::default();
+            let store = infrastructure::PgMaintenanceStore::new(pool.clone());
+            let kept = provider.clone();
+            if let Ok(rt) = tokio::runtime::Handle::try_current() {
+                rt.spawn(async move {
+                    loop {
+                        match store.modules().await {
+                            Ok(Some(modules)) => kept.update(&modules),
+                            Ok(None) => kept.update(&serde_json::Value::Null),
+                            Err(e) => tracing::warn!("reading the installed modules: {e}"),
+                        }
+                        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                    }
+                });
+            }
+            provider
+        })
+        .clone()
+}
+
+/// Machine tokens of the core's audience from the orchestration provider's
+/// machine client only (rulings 97 and 104): every internal quality route.
+fn internal_tokens(
+    p: AuthorizationServer,
+    pool: &PgPool,
+) -> Arc<dyn quality::worker_api::MachineTokens> {
+    Arc::new(quality::orchestrator_callers::OrchestratorOnly {
+        tokens: Arc::new(BundleTokens(p)),
+        provider: orchestration(pool),
     })
 }
 
