@@ -3089,7 +3089,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "-- Profiling (decision 0031): each field of the cut, the emptiest first,\n-- with its distinct values and its commonest shape's share.\nSELECT f.field, s.records, f.empty,\n       CASE WHEN s.records > 0 THEN round(f.empty::numeric / s.records, 4) END AS empty_share,\n       f.distinct_values, f.pattern,\n       CASE WHEN s.records > f.empty\n            THEN round(f.pattern_count::numeric / (s.records - f.empty), 4) END AS pattern_share\n  FROM quality.field_quality f\n  JOIN quality.run_summary s USING (tenant_id, dataset, cut)\n WHERE f.dataset = (NULLIF(${dataset:sqlstring}, '')::text) AND f.cut = (NULLIF(${cut:sqlstring}, '')::text)::date\n ORDER BY empty_share DESC NULLS LAST, f.field",
+          "rawSql": "-- Profiling (decision 0031): each field of the cut, the emptiest first,\n-- with its distinct values and its commonest shape's share.\nSELECT f.field, s.records, f.empty,\n       CASE WHEN s.records > 0 THEN round(f.empty::numeric / s.records, 4) END AS empty_share,\n       f.distinct_values, f.pattern, f.floating,\n       CASE WHEN s.records > f.empty\n            THEN round(f.pattern_count::numeric / (s.records - f.empty), 4) END AS pattern_share\n  FROM quality.field_quality f\n  JOIN quality.run_summary s USING (tenant_id, dataset, cut)\n WHERE f.dataset = (NULLIF(${dataset:sqlstring}, '')::text) AND f.cut = (NULLIF(${cut:sqlstring}, '')::text)::date\n ORDER BY empty_share DESC NULLS LAST, f.field",
           "refId": "A"
         }
       ],
@@ -3234,6 +3234,7 @@
               "empty_share": "Porcentaje vacío",
               "distinct_values": "Valores distintos",
               "pattern": "Forma más común",
+              "floating": "Número de punto flotante",
               "pattern_share": "Su porcentaje de los llenos"
             }
           }
@@ -5157,7 +5158,7 @@
               "editorMode": "code",
               "format": "table",
               "rawQuery": true,
-              "rawSql": "-- Profiling (decision 0031): each field of the cut, the emptiest first,\n-- with its distinct values and its commonest shape's share.\nSELECT f.field, s.records, f.empty,\n       CASE WHEN s.records > 0 THEN round(f.empty::numeric / s.records, 4) END AS empty_share,\n       f.distinct_values, f.pattern,\n       CASE WHEN s.records > f.empty\n            THEN round(f.pattern_count::numeric / (s.records - f.empty), 4) END AS pattern_share\n  FROM quality.field_quality f\n  JOIN quality.run_summary s USING (tenant_id, dataset, cut)\n WHERE f.dataset = (NULLIF(${dataset:sqlstring}, '')::text) AND f.cut = (NULLIF(${cut:sqlstring}, '')::text)::date\n ORDER BY empty_share DESC NULLS LAST, f.field",
+              "rawSql": "-- Profiling (decision 0031): each field of the cut, the emptiest first,\n-- with its distinct values and its commonest shape's share.\nSELECT f.field, s.records, f.empty,\n       CASE WHEN s.records > 0 THEN round(f.empty::numeric / s.records, 4) END AS empty_share,\n       f.distinct_values, f.pattern, f.floating,\n       CASE WHEN s.records > f.empty\n            THEN round(f.pattern_count::numeric / (s.records - f.empty), 4) END AS pattern_share\n  FROM quality.field_quality f\n  JOIN quality.run_summary s USING (tenant_id, dataset, cut)\n WHERE f.dataset = (NULLIF(${dataset:sqlstring}, '')::text) AND f.cut = (NULLIF(${cut:sqlstring}, '')::text)::date\n ORDER BY empty_share DESC NULLS LAST, f.field",
               "refId": "A"
             }
           ],
@@ -5223,6 +5224,7 @@
                   "empty_share": "Porcentaje vacío",
                   "distinct_values": "Valores distintos",
                   "pattern": "Forma más común",
+                  "floating": "Número de punto flotante",
                   "pattern_share": "Su porcentaje de los llenos"
                 }
               }

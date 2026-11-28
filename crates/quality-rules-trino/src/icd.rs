@@ -8,7 +8,7 @@
 use quality::mapping::{FieldRole, Mapping, Priority, Semantic};
 use quality_rules_compile::Compiled;
 use quality_rules_model::Severity;
-use quality_rules_sql::{double, quote_text, Engine, Sql, Tables};
+use quality_rules_sql::{double, quote_text, Cut, Engine, Sql, Tables};
 
 use crate::{quoted, Error, Statement};
 
@@ -23,7 +23,8 @@ const W_C: f64 = 0.40;
 const W_S: f64 = 0.15;
 const W_A: f64 = 0.15;
 
-/// One rule as the ICD reads it: its Trino SQL, its severity and fields.
+/// One rule as the ICD reads it: its Trino SQL at the cut, its severity
+/// and fields.
 #[derive(Debug, Clone)]
 pub struct IcdRule {
     pub id: String,
@@ -34,10 +35,10 @@ pub struct IcdRule {
 }
 
 impl IcdRule {
-    pub fn of(rule: &Compiled, tables: &Tables) -> Result<Self, Error> {
+    pub fn of(rule: &Compiled, tables: &Tables, cut: &Cut) -> Result<Self, Error> {
         Ok(Self {
             id: rule.id.clone(),
-            sql: quality_rules_sql::rule(rule, Engine::Trino, tables)
+            sql: quality_rules_sql::rule_at(rule, Engine::Trino, tables, cut)
                 .map_err(|e| Error::Rule(rule.id.clone(), e))?,
             severity: rule.severity,
             reads: rule.reads(),
@@ -206,16 +207,18 @@ fn array(items: Vec<String>, ty: &str) -> String {
     format!("CAST(ARRAY[{}] AS ARRAY({ty}))", items.join(", "))
 }
 
-/// The scratch `INSERT` of the job's records over `from` (the pinned cut).
+/// The scratch `INSERT` of the job's records over `from` (the pinned cut),
+/// `rules` written at the same `cut`.
 pub fn scratch_insert(
     job_id: &str,
     dataset: &str,
     from: &str,
     mapping: &Mapping,
     rules: &[IcdRule],
+    cut: &Cut,
 ) -> Result<Statement, Error> {
     let fields = measured(mapping, rules);
-    let cut = "CAST(? AS DATE)";
+    let cut = cut.literal();
     let mut read: Vec<String> = rules
         .iter()
         .enumerate()
@@ -243,8 +246,6 @@ pub fn scratch_insert(
         }
         None => "CAST(NULL AS DOUBLE)".into(),
     };
-    let cut_params = rules.iter().map(|r| r.sql.cut_params).sum::<usize>()
-        + usize::from(role(mapping, FieldRole::Updated).is_some());
     read.push(format!("{a} AS \"__a\""));
     let dimensions = with_role(mapping, FieldRole::Dimension);
     for (j, d) in dimensions.iter().enumerate() {
@@ -295,5 +296,5 @@ pub fn scratch_insert(
         cs = array(cells.kept(), "BOOLEAN"),
         read = read.join(", "),
     );
-    Ok(Statement { sql, cut_params })
+    Ok(Statement { sql })
 }

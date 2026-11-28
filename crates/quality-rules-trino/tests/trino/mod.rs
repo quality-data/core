@@ -67,15 +67,3 @@ pub(crate) async fn rows(base: &str, sql: &str) -> Vec<Vec<Value>> {
         Answer::Error(e) => panic!("{e}: {sql}"),
     }
 }
-
-/// `sql` with the cut bound `params` times, as Trino binds it.
-pub(crate) fn bound(sql: &str, cut: &str, params: usize) -> String {
-    if params == 0 {
-        return sql.to_string();
-    }
-    let using = vec![format!("DATE '{cut}'"); params].join(", ");
-    format!(
-        "EXECUTE IMMEDIATE {} USING {using}",
-        quality_rules_sql::quote_text(sql).expect("no control characters")
-    )
-}

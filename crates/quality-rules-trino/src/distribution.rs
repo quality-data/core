@@ -50,7 +50,7 @@ pub fn variable_percentiles(from: &str, field: &str, method: Method) -> Result<S
         Method::Window => percentiles(&values),
         Method::Bracket => bracket(&values),
     };
-    Ok(Statement { sql, cut_params: 0 })
+    Ok(Statement { sql })
 }
 
 /// The bracket method: every value in one of `BUCKETS` equal-width buckets
@@ -119,7 +119,6 @@ pub fn outliers(from: &str, amount: &str, dimension: &str) -> Result<Statement, 
             low = double(-Z),
             high = double(Z),
         ),
-        cut_params: 0,
     })
 }
 
