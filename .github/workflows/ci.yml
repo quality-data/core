@@ -205,16 +205,20 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       # The contract tier A (decision 0090, step 9): the same SQL on DuckDB
-      # and on Trino 484, which runs RE2J. One node, no lake; removed below.
+      # and on Trino 484, which runs RE2J. One node, no lake (`lake` is a memory
+      # catalog); removed below.
       - name: Start Trino for the contract tier A
         run: |
           mkdir -p "$RUNNER_TEMP/trino"
           printf '%s\n' coordinator=true node-scheduler.include-coordinator=true \
             http-server.http.port=8080 discovery.uri=http://localhost:8080 \
             regex-library=RE2J > "$RUNNER_TEMP/trino/config.properties"
+          # A memory catalog named as the lake, for the scratch rows' reads.
+          echo connector.name=memory > "$RUNNER_TEMP/trino/lake.properties"
           docker run -d --name "qd-ci-trino-${{ github.run_id }}" --memory 3g \
             -p 127.0.0.1:18484:8080 \
             -v "$RUNNER_TEMP/trino/config.properties:/etc/trino/config.properties:ro" \
+            -v "$RUNNER_TEMP/trino/lake.properties:/etc/trino/catalog/lake.properties:ro" \
             trinodb/trino:484
           for _ in $(seq 1 90); do
             if curl -sf http://127.0.0.1:18484/v1/info | grep -q '"starting":false'; then exit 0; fi

@@ -124,6 +124,7 @@ async fn fixture() -> Fixture {
         "GRANT USAGE ON SCHEMA quality TO app",
         "ALTER TABLE quality.jobs OWNER TO app",
         "ALTER TABLE quality.console_results OWNER TO app",
+        "ALTER TABLE quality.cuts OWNER TO app",
     ] {
         sqlx::query(sql).execute(&db.pool).await.unwrap();
     }
