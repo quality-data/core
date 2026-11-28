@@ -99,6 +99,66 @@ impl ManifestWriter {
     }
 }
 
+impl ManifestWriter {
+    /// The object at `bucket/key`, or `None` if there is none. `policy` is
+    /// the session policy of this read.
+    pub async fn get(
+        &self,
+        bucket: &str,
+        key: &str,
+        policy: &str,
+    ) -> Result<Option<Vec<u8>>, String> {
+        let creds = self
+            .issuer
+            .assume_role("manifest-read", policy, Duration::from_secs(0))
+            .await
+            .map_err(|e| e.to_string())?;
+        let url = object_url(self.issuer.properties(), bucket, key);
+        let path = format!(
+            "/{}",
+            url.split_once("://")
+                .and_then(|(_, r)| r.split_once('/'))
+                .map_or("", |(_, p)| p)
+        );
+        let host = sigv4::host(&url).ok_or_else(|| format!("bad endpoint {url}"))?;
+        let hash = payload_hash(&[]);
+        let headers = [
+            ("host", host.as_str()),
+            ("x-amz-content-sha256", hash.as_str()),
+            ("x-amz-security-token", creds.session_token.as_str()),
+        ];
+        let signed = sigv4::sign(
+            "s3",
+            &creds.access_key,
+            &creds.secret_key,
+            "GET",
+            &path,
+            &headers,
+            Utc::now(),
+        );
+        let mut req = self.issuer.http().get(&url);
+        for (name, value) in headers.iter().filter(|(n, _)| *n != "host") {
+            req = req.header(*name, *value);
+        }
+        let res = req
+            .header("x-amz-date", &signed.date)
+            .header("authorization", &signed.authorization)
+            .send()
+            .await
+            .map_err(|e| format!("manifest read: {e}"))?;
+        match res.status().as_u16() {
+            200 => Ok(Some(
+                res.bytes()
+                    .await
+                    .map_err(|e| format!("manifest read: {e}"))?
+                    .to_vec(),
+            )),
+            404 => Ok(None),
+            status => Err(format!("manifest read refused ({status})")),
+        }
+    }
+}
+
 /// The keys of a `ListObjectsV2` page, and the token of the next one.
 fn listed(xml: &str) -> (Vec<String>, Option<String>) {
     let between = |s: &str, open: &str, close: &str| -> Vec<String> {
