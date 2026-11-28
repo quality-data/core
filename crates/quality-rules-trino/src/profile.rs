@@ -4,6 +4,8 @@
 //! spelling: `regexp_replace` replaces every match, `regexp_like` anchors
 //! by `^…$`.
 
+use quality_rules_sql::{Cut, ShapeKind};
+
 use crate::{quoted, Error, Statement};
 
 /// The longest shape kept.
@@ -13,19 +15,32 @@ pub const SHAPE_LEN: usize = 40;
 /// a last band takes the older ones.
 pub const RECENCY_DAYS: [i64; 5] = [30, 90, 180, 365, 730];
 
+/// A mapped field's profile over bronze's accepted load (decision 0090,
+/// ruling 32): bronze keeps the source's integer and decimal types, which
+/// silver turns into `DOUBLE`, so the profile reads `column`, the field's
+/// column, with the kind of `bronze_type`, its type in bronze.
+pub fn bronze_profile(bronze: &str, column: &str, bronze_type: &str) -> Result<Statement, Error> {
+    field_profile(bronze, column, ShapeKind::of_type(bronze_type))
+}
+
 /// One row over `from`: the field's empties (decision 0033: `NULL`, blank
 /// or only spaces), its distinct values, its commonest shape (each digit
 /// `9`, each ASCII letter `A`, cut at [`SHAPE_LEN`]) and how many have it.
-pub fn field_profile(from: &str, field: &str) -> Result<Statement, Error> {
-    let v = format!("CAST({} AS VARCHAR)", quoted(field)?);
+/// The shape is taken from the text `kind` says; a field of a kind with no
+/// shape (a floating-point number) gives `NULL` and 0.
+pub fn field_profile(from: &str, field: &str, kind: ShapeKind) -> Result<Statement, Error> {
+    let c = quoted(field)?;
+    let t = kind
+        .text(&c)
+        .unwrap_or_else(|| "CAST(NULL AS VARCHAR)".into());
     Ok(Statement {
         sql: format!(
-            "WITH e AS (SELECT {v} AS v FROM {from}),
-                  f AS (SELECT v FROM e
+            "WITH e AS (SELECT CAST({c} AS VARCHAR) AS v, {t} AS t FROM {from}),
+                  f AS (SELECT v, t FROM e
                          WHERE NOT (v IS NULL OR regexp_like(v, '^[\\s\\x{{00A0}}]*$'))),
-                  s AS (SELECT substr(regexp_replace(regexp_replace(v, '[0-9]', '9'),
+                  s AS (SELECT substr(regexp_replace(regexp_replace(t, '[0-9]', '9'),
                                                      '[A-Za-z]', 'A'), 1, {SHAPE_LEN}) AS p
-                          FROM f),
+                          FROM f WHERE t IS NOT NULL),
                   p AS (SELECT p, count(*) AS n FROM s GROUP BY p
                          ORDER BY n DESC NULLS LAST, p ASC NULLS LAST LIMIT 1)
              SELECT (SELECT count(*) FROM e) - (SELECT count(*) FROM f),
@@ -33,16 +48,20 @@ pub fn field_profile(from: &str, field: &str) -> Result<Statement, Error> {
                     (SELECT p FROM p),
                     COALESCE((SELECT n FROM p), 0)"
         ),
-        cut_params: 0,
     })
 }
 
-/// One row over `from`: the records by the age of `field` at the cut,
-/// dated after it, then up to each of [`RECENCY_DAYS`], then older.
-pub fn recency(from: &str, field: &str) -> Result<Statement, Error> {
+/// The number of recency bands: after the cut, each of
+/// [`RECENCY_DAYS`], then older.
+pub const RECENCY_BANDS: usize = RECENCY_DAYS.len() + 2;
+
+/// One row over `from`: the records by the age of `field` at `cut`, dated
+/// after it, then up to each of [`RECENCY_DAYS`], then older.
+pub fn recency(from: &str, field: &str, cut: &Cut) -> Result<Statement, Error> {
     let age = format!(
-        "date_diff('day', CAST({} AS DATE), CAST(? AS DATE))",
-        quoted(field)?
+        "date_diff('day', CAST({} AS DATE), {})",
+        quoted(field)?,
+        cut.literal()
     );
     let mut bands = vec![format!("count(*) FILTER (WHERE {age} < 0)")];
     let mut lo = 0;
@@ -53,8 +72,8 @@ pub fn recency(from: &str, field: &str) -> Result<Statement, Error> {
         lo = hi + 1;
     }
     bands.push(format!("count(*) FILTER (WHERE {age} >= {lo})"));
+    debug_assert_eq!(bands.len(), RECENCY_BANDS);
     Ok(Statement {
-        cut_params: bands.len(),
         sql: format!("SELECT {} FROM {from}", bands.join(", ")),
     })
 }
@@ -74,10 +93,9 @@ mod tests {
 
     #[test]
     fn the_profile_uses_trinos_spelling_and_portable_forms() {
-        let s = field_profile("t", "Code").unwrap();
-        assert_eq!(s.cut_params, 0);
+        let s = field_profile("t", "Code", ShapeKind::Text).unwrap();
         assert!(s.sql.contains("regexp_like(v, '^[\\s\\x{00A0}]*$')"));
-        assert!(s.sql.contains("regexp_replace(v, '[0-9]', '9')"));
+        assert!(s.sql.contains("regexp_replace(t, '[0-9]', '9')"));
         for word in ["regexp_full_match", "'g'", "left(", "::", "[[:"] {
             assert!(!s.sql.contains(word), "{word}");
         }
@@ -87,11 +105,38 @@ mod tests {
     }
 
     #[test]
-    fn recency_binds_the_cut_once_per_band() {
-        let s = recency("t", "Updated").unwrap();
-        assert_eq!(s.cut_params, 7);
+    fn a_number_is_shaped_by_its_kind() {
+        let wide = ShapeKind::Decimal {
+            precision: 4,
+            scale: 4,
+        };
+        let s = field_profile("t", "Rate", wide).unwrap();
+        assert!(s
+            .sql
+            .contains("CAST(CAST(\"Rate\" AS DECIMAL(5, 4)) AS VARCHAR) AS t"));
+        let s = field_profile("t", "Amount", ShapeKind::Float).unwrap();
+        assert!(s.sql.contains("CAST(NULL AS VARCHAR) AS t"));
+        assert!(s.sql.contains("FROM f WHERE t IS NOT NULL"));
+    }
+
+    #[test]
+    fn bronzes_type_gives_the_kind() {
+        let s = bronze_profile("b", "monto", "decimal(4,4)").unwrap();
+        assert!(s
+            .sql
+            .contains("CAST(CAST(\"monto\" AS DECIMAL(5, 4)) AS VARCHAR) AS t"));
+        let s = bronze_profile("b", "monto", "decimal(38,38)").unwrap();
+        assert!(s.sql.contains("CAST(NULL AS VARCHAR) AS t"));
+    }
+
+    #[test]
+    fn recency_writes_the_cut_once_per_band() {
+        let cut = Cut::parse("2026-10-31").unwrap();
+        let s = recency("t", "Updated", &cut).unwrap();
+        assert_eq!(s.sql.matches("DATE '2026-10-31'").count(), RECENCY_BANDS);
+        assert!(!s.sql.contains('?'));
         assert!(s.sql.contains("BETWEEN 31 AND 90"));
         assert!(s.sql.ends_with(">= 731) FROM t"));
-        assert!(field_profile("t", "a\u{0}b").is_err());
+        assert!(field_profile("t", "a\u{0}b", ShapeKind::Text).is_err());
     }
 }

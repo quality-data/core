@@ -1,0 +1,152 @@
+//! The server's `JobCompiler` (decision 0090, amendment A1 point 2): it
+//! gathers a job's input from PostgreSQL and compiles it with the pure
+//! `quality-jobs`. Kinds not compiled yet are refused as
+//! `kind_not_compiled`.
+
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use infrastructure::PgPool;
+use quality::bundle::Bundle;
+use quality::bundle_api::{CompileRefused, JobCompiler, JobRequest};
+use quality::catalog::Catalog;
+use quality::job_inputs::{dataset_slas, evaluate_facts, next_run_seq, FactsError};
+use quality_jobs::{CompileError, EvaluateInput, Job, ReferencePin, RetractInput, SlasInput};
+use quality_rules_trino::{Sla, TablePath};
+
+/// The window method's most distinct values when `QD_EXACT_SORT_LIMIT` is
+/// not set (decision 0090, point 8.3: to be measured per tier).
+const EXACT_SORT_LIMIT: u64 = 1_000_000;
+
+pub(crate) struct TrinoJobs {
+    pub(crate) pool: PgPool,
+    /// The catalog's `main`, which an evaluate's mapping and rules come from.
+    pub(crate) catalog: Option<Arc<dyn Catalog>>,
+}
+
+fn exact_sort_limit() -> u64 {
+    std::env::var("QD_EXACT_SORT_LIMIT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(EXACT_SORT_LIMIT)
+}
+
+fn lake(namespace: String, table: String) -> TablePath {
+    TablePath {
+        catalog: "lake".into(),
+        namespace,
+        table,
+    }
+}
+
+fn database(e: impl std::fmt::Display) -> CompileRefused {
+    tracing::error!("job compile: {e}");
+    CompileRefused("internal")
+}
+
+fn refused(e: CompileError) -> CompileRefused {
+    match e {
+        CompileError::Incomplete(what) => {
+            tracing::warn!(what, "job compile: the job is incomplete");
+            CompileRefused("job_incomplete")
+        }
+        CompileError::Statement(e) => {
+            tracing::error!("job compile: {e:?}");
+            CompileRefused("compile_failed")
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl JobCompiler for TrinoJobs {
+    async fn compile(&self, run: &str, job: &JobRequest) -> Result<Bundle, CompileRefused> {
+        let cut = job.cut.map(|c| c.format("%Y-%m-%d").to_string());
+        let mut j = Job {
+            run,
+            kind: &job.kind,
+            dataset: job.dataset.as_deref(),
+            cut: cut.as_deref(),
+            attempt: job.attempt,
+            run_seq: None,
+            catalog_commit: None,
+        };
+        match job.kind.as_str() {
+            "retract" => {
+                if j.cut.is_some() {
+                    j.run_seq = Some(next_run_seq(&self.pool).await.map_err(database)?);
+                }
+                quality_jobs::retract(&j, &RetractInput).map_err(refused)
+            }
+            "slas" => {
+                let dataset = j.dataset.ok_or(CompileRefused("job_incomplete"))?;
+                let slas = dataset_slas(&self.pool, dataset)
+                    .await
+                    .map_err(database)?
+                    .into_iter()
+                    .filter_map(|s| {
+                        Some(Sla {
+                            dimension: s.dimension,
+                            group: s.grp,
+                            days: u32::try_from(s.days).ok()?,
+                        })
+                    })
+                    .collect();
+                quality_jobs::slas(&j, &SlasInput { slas }).map_err(refused)
+            }
+            "evaluate" => self.evaluate(j, job).await,
+            _ => Err(CompileRefused("kind_not_compiled")),
+        }
+    }
+}
+
+impl TrinoJobs {
+    /// An evaluate from the catalog's `main` now, with a new `run_seq`.
+    async fn evaluate(&self, j: Job<'_>, job: &JobRequest) -> Result<Bundle, CompileRefused> {
+        let (Some(dataset), Some(cut)) = (j.dataset, job.cut) else {
+            return Err(CompileRefused("job_incomplete"));
+        };
+        let catalog = self
+            .catalog
+            .as_deref()
+            .ok_or(CompileRefused("catalog_not_configured"))?;
+        let facts = evaluate_facts(&self.pool, catalog, dataset, cut)
+            .await
+            .map_err(|e| match e {
+                FactsError::Refused(class) => CompileRefused(class),
+                FactsError::Failed(e) => database(e),
+            })?;
+        let (bronze_ns, bronze_table) = quality::layers::bronze(&facts.mapping);
+        let (silver_ns, silver_table) =
+            quality::layers::silver(&facts.mapping).ok_or(CompileRefused("no_silver"))?;
+        let run_seq = next_run_seq(&self.pool).await.map_err(database)?;
+        let j = Job {
+            run_seq: Some(run_seq),
+            catalog_commit: Some(&facts.commit),
+            ..j
+        };
+        let previous = facts.previous.map(|d| d.format("%Y-%m-%d").to_string());
+        let references: Vec<ReferencePin<'_>> = facts
+            .references
+            .iter()
+            .map(|r| ReferencePin {
+                name: &r.name,
+                silver: lake(r.namespace.clone(), r.table.clone()),
+                load: r.load.as_deref(),
+            })
+            .collect();
+        let input = EvaluateInput {
+            mapping: &facts.mapping,
+            rules: &facts.rules,
+            tables: &facts.tables,
+            references: &references,
+            silver: lake(silver_ns, silver_table),
+            bronze: lake(bronze_ns, bronze_table),
+            load: facts.load.as_deref(),
+            previous: previous.as_deref(),
+            bronze_types: &BTreeMap::new(),
+            rules_commit: &facts.commit,
+            exact_sort_limit: exact_sort_limit(),
+        };
+        quality_jobs::evaluate(&j, &input).map_err(refused)
+    }
+}

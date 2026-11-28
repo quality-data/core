@@ -160,7 +160,7 @@ function profiling(lang: Lang, rows: Row[], tr: Texts): Figure {
           num(lang, n(r.empty)),
           share(lang, r.empty_share),
           num(lang, n(r.distinct_values)),
-          s(r.pattern),
+          r.floating === true ? tr("floating") : s(r.pattern),
           share(lang, r.pattern_share),
         ]),
       },
