@@ -5,7 +5,7 @@
 //! scans (T20: the branches read at once, one snapshot). Text keys are
 //! never split.
 
-use quality_rules_sql::quote_text;
+use quality_rules_sql::{quote_text, Cut};
 
 use crate::loads::LOAD;
 use crate::read::TablePath;
@@ -80,7 +80,7 @@ pub fn bronze_type(ty: &str) -> (String, Conversion) {
 }
 
 fn plain(sql: String) -> Statement {
-    Statement { sql, cut_params: 0 }
+    Statement { sql }
 }
 
 /// The source's catalog `src_<source>`: where it is, and no secret. The
@@ -153,7 +153,7 @@ pub fn extract(
     bronze: &TablePath,
     source: &TablePath,
     columns: &[(String, String)],
-    (cut, load): (&str, &str),
+    (cut, load): (&Cut, &str),
     ranges: Option<(&str, &[Range])>,
 ) -> Result<Statement, Error> {
     let mut names = Vec::new();
@@ -170,9 +170,9 @@ pub fn extract(
         quoted(&source.table)?
     );
     let head = format!(
-        "SELECT {}, DATE {}, {} FROM {from}",
+        "SELECT {}, {}, {} FROM {from}",
         casts.join(", "),
-        quote_text(cut)?,
+        cut.literal(),
         quote_text(load)?
     );
     let body = match ranges {

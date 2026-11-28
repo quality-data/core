@@ -8,8 +8,9 @@
 
 use quality::layers::{SourceClass, DERIVED_BY, ENTITY_KEY, KEY_NORMALIZED};
 use quality::mapping::{FieldRole, Kind, Mapping};
-use quality_rules_sql::quote_text;
+use quality_rules_sql::{quote_text, Cut};
 
+use crate::extract::bronze_type;
 use crate::icd::{key, with_role};
 use crate::read::{pinned, typed_select, Pinned, TablePath};
 use crate::{quoted, Error, Statement};
@@ -21,12 +22,12 @@ pub const LOAD: &str = "_load";
 /// loads existed (`_load` `NULL`, read as the cut's load until replaced).
 #[derive(Debug, Clone, Copy)]
 pub struct Accepted<'a> {
-    pub cut: &'a str,
+    pub cut: &'a Cut,
     pub load: Option<&'a str>,
 }
 
 fn plain(sql: String) -> Statement {
-    Statement { sql, cut_params: 0 }
+    Statement { sql }
 }
 
 fn table(t: &TablePath) -> Result<String, Error> {
@@ -40,14 +41,18 @@ fn table(t: &TablePath) -> Result<String, Error> {
 
 /// The accepted load of a cut at its recorded snapshot, as a relation.
 pub fn accepted(p: &Pinned, a: &Accepted<'_>) -> Result<String, Error> {
+    accepted_in(&pinned(p)?, a)
+}
+
+/// The accepted load of a cut in `from`, a pinned table (`pinned_by`).
+pub fn accepted_in(from: &str, a: &Accepted<'_>) -> Result<String, Error> {
     let load = match a.load {
         Some(l) => format!("{LOAD} = {}", quote_text(l)?),
         None => format!("{LOAD} IS NULL"),
     };
     Ok(format!(
-        "(SELECT * FROM {} WHERE cut = DATE {} AND {load})",
-        pinned(p)?,
-        quote_text(a.cut)?
+        "(SELECT * FROM {from} WHERE cut = {} AND {load})",
+        a.cut.literal()
     ))
 }
 
@@ -90,6 +95,55 @@ pub fn create_silver(t: &TablePath, mapping: &Mapping) -> Result<Statement, Erro
     )))
 }
 
+/// A `prepare` job's statements (decision 0090, rulings 66 and 68): the
+/// dataset's bronze table (each mapped column, typed by `bronze_type` of
+/// the type Trino lists it with in `source_columns`) and its silver table,
+/// each created if missing, then every column added if missing, so a
+/// mapping whose columns changed is prepared again. Each can run twice.
+pub fn prepare(
+    bronze: &TablePath,
+    silver: &TablePath,
+    mapping: &Mapping,
+    source_columns: &[(String, String)],
+) -> Result<Vec<Statement>, Error> {
+    let mut bronze_cols: Vec<(String, String)> = Vec::new();
+    for f in mapping.fields.values() {
+        let c = &f.value.column;
+        if bronze_cols.iter().any(|(n, _)| n == c) {
+            continue;
+        }
+        let (_, ty) = source_columns
+            .iter()
+            .find(|(n, _)| n == c)
+            .ok_or_else(|| Error::UnknownField(c.clone()))?;
+        bronze_cols.push((c.clone(), bronze_type(ty).0));
+    }
+    let silver_cols: Vec<(String, String)> = silver_columns(mapping)
+        .into_iter()
+        .map(|(n, t)| (n, t.to_string()))
+        .collect();
+    let mut out = Vec::new();
+    for (t, cols) in [(bronze, bronze_cols), (silver, silver_cols)] {
+        let mut defs = Vec::new();
+        for (n, ty) in &cols {
+            defs.push(format!("{} {ty}", quoted(n)?));
+        }
+        defs.push(format!("cut DATE, {LOAD} VARCHAR"));
+        let at = table(t)?;
+        out.push(plain(format!(
+            "CREATE TABLE IF NOT EXISTS {at} ({}) WITH (partitioning = ARRAY['cut', '{LOAD}'])",
+            defs.join(", ")
+        )));
+        for (n, ty) in &cols {
+            out.push(plain(format!(
+                "ALTER TABLE {at} ADD COLUMN IF NOT EXISTS {} {ty}",
+                quoted(n)?
+            )));
+        }
+    }
+    Ok(out)
+}
+
 /// The silver derivation of one bronze load: every field typed as mapped,
 /// the entity's key normalized and whether it did, the derivation's
 /// `digest`, the cut and the bronze load it came from. One `INSERT`.
@@ -123,7 +177,7 @@ pub fn derive_silver(
         ));
     }
     extra.push(quote_text(digest)?);
-    extra.push(format!("DATE {}", quote_text(bronze.1.cut)?));
+    extra.push(bronze.1.cut.literal());
     extra.push(quote_text(load)?);
     let mut names = Vec::new();
     for (n, _) in silver_columns(mapping) {
@@ -163,24 +217,24 @@ pub fn migrate_to_loads(t: &TablePath) -> Result<Vec<Statement>, Error> {
 
 /// The loads a cut has, from `"t$partitions"`: a superseded one is deleted
 /// only when listed here (RustFS refuses an empty delete).
-pub fn loads_of_cut(t: &TablePath, cut: &str) -> Result<Statement, Error> {
+pub fn loads_of_cut(t: &TablePath, cut: &Cut) -> Result<Statement, Error> {
     let parts = TablePath {
         table: format!("{}$partitions", t.table),
         ..t.clone()
     };
     Ok(plain(format!(
-        "SELECT partition.{LOAD} FROM {} WHERE partition.cut = DATE {}",
+        "SELECT partition.{LOAD} FROM {} WHERE partition.cut = {}",
         table(&parts)?,
-        quote_text(cut)?
+        cut.literal()
     )))
 }
 
 /// A superseded load's rows, by partition only: whole files go.
-pub fn delete_load(t: &TablePath, cut: &str, load: &str) -> Result<Statement, Error> {
+pub fn delete_load(t: &TablePath, cut: &Cut, load: &str) -> Result<Statement, Error> {
     Ok(plain(format!(
-        "DELETE FROM {} WHERE cut = DATE {} AND {LOAD} = {}",
+        "DELETE FROM {} WHERE cut = {} AND {LOAD} = {}",
         table(t)?,
-        quote_text(cut)?,
+        cut.literal(),
         quote_text(load)?
     )))
 }
