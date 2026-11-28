@@ -71,11 +71,12 @@ pub(crate) async fn store(
     sqlx::query(
         "INSERT INTO quality.field_quality
              (dataset, cut, field, empty, distinct_values, pattern, pattern_count,
-              mean_icd)
+              mean_icd, floating)
          SELECT $1, $2::date, f.*
            FROM unnest($3::text[], $4::bigint[], $5::bigint[], $6::text[], $7::bigint[],
-                       $8::float8[])
-             AS f (field, empty, distinct_values, pattern, pattern_count, mean_icd)",
+                       $8::float8[], $9::boolean[])
+             AS f (field, empty, distinct_values, pattern, pattern_count, mean_icd,
+                   floating)",
     )
     .bind(dataset)
     .bind(&report.cut)
@@ -90,6 +91,7 @@ pub(crate) async fn store(
     )
     .bind(fields.iter().map(|f| f.pattern_count).collect::<Vec<_>>())
     .bind(fields.iter().map(|f| f.icd).collect::<Vec<_>>())
+    .bind(fields.iter().map(|f| f.floating).collect::<Vec<_>>())
     .execute(&mut *tx)
     .await?;
     recency(&mut tx, dataset, report).await?;
