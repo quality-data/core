@@ -1,0 +1,19 @@
+[package]
+name = "quality-jobs"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+# The compiler of a job's bundle (decision 0090, amendment A1): pure, no
+# I/O and no DuckDB. The server gathers its input and signs the result.
+[dependencies]
+quality.workspace = true
+quality-rules.workspace = true
+quality-rules-trino.workspace = true

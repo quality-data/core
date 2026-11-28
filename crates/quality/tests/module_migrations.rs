@@ -51,7 +51,9 @@ async fn the_queue_table_is_created_once_with_forced_row_security() {
             "quality::0026_jobs_uses_trino",
             "quality::0027_claim_in_maintenance",
             "quality::0028_claim_without_trino_hold",
-            "quality::0029_gold_run_seq"
+            "quality::0029_gold_run_seq",
+            "quality::0030_job_bundles",
+            "quality::0031_field_quality_floating"
         ]
     );
     assert_eq!(migrate(&registry, &db.pool).await, Vec::<String>::new());
@@ -174,7 +176,9 @@ async fn two_processes_migrating_together_apply_each_migration_once() {
             "quality::0026_jobs_uses_trino",
             "quality::0027_claim_in_maintenance",
             "quality::0028_claim_without_trino_hold",
-            "quality::0029_gold_run_seq"
+            "quality::0029_gold_run_seq",
+            "quality::0030_job_bundles",
+            "quality::0031_field_quality_floating"
         ]
     );
 }

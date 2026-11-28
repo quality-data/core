@@ -20,7 +20,7 @@ fn job(job_id: &str) -> Result<String, Error> {
 }
 
 fn plain(sql: String) -> Statement {
-    Statement { sql, cut_params: 0 }
+    Statement { sql }
 }
 
 /// One row: the mean record ICD, then each measured field's mean.
