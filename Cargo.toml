@@ -71,6 +71,7 @@ quality-rules-duckdb = { path = "crates/quality-rules-duckdb" }
 # The statements for Trino (decision 0090): SQL text only, pure; the job
 # runners submit them.
 quality-rules-trino = { path = "crates/quality-rules-trino" }
+quality-jobs = { path = "crates/quality-jobs" }
 # Test-only harness (ephemeral Postgres via testcontainers); consumed only
 # from other crates' `[dev-dependencies]`, never a runtime dependency.
 testkit = { path = "crates/testkit" }

@@ -28,3 +28,8 @@ sha2.workspace = true
 
 [dev-dependencies]
 hmac.workspace = true
+# The contract tier A against Trino (tests/tier_a.rs), when QD_TRINO_URL is set.
+quality-rules-trino.workspace = true
+reqwest.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
