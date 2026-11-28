@@ -7,6 +7,7 @@ use axum::Router;
 use contracts::{Drain, Migration, Module};
 use sqlx::PgPool;
 
+use crate::bundle_api::{self, BundleServices};
 use crate::catalog::Catalog;
 use crate::chart_api;
 use crate::console_api;
@@ -18,6 +19,7 @@ use crate::draft_api::{self, DraftCatalog};
 use crate::draft_history;
 use crate::drain::QualityDrain;
 use crate::edit_api;
+use crate::entity_lookup_api;
 use crate::field_api;
 use crate::lake_tables;
 use crate::map_api;
@@ -25,6 +27,9 @@ use crate::proposal::Patterns;
 use crate::records_api;
 use crate::rule_test;
 use crate::rules_api;
+use crate::run_report_api::{self, RunReportServices};
+use crate::run_source_api::{self, RunSourceServices};
+use crate::run_token_api::{self, RunTokenServices};
 use crate::schedule_api;
 use crate::sla_api;
 use crate::source_api;
@@ -42,6 +47,10 @@ pub struct QualityModule {
     sources: Option<SourceServices>,
     patterns: Patterns,
     drafts: Option<Arc<dyn DraftCatalog>>,
+    bundles: Option<(PgPool, BundleServices)>,
+    run_tokens: Option<(PgPool, RunTokenServices)>,
+    run_sources: Option<(PgPool, RunSourceServices)>,
+    run_reports: Option<(PgPool, RunReportServices)>,
 }
 
 /// What the sources' routes use: the store, its sealer, and the catalog.
@@ -68,6 +77,10 @@ impl QualityModule {
             sources: None,
             patterns: Patterns::default(),
             drafts: None,
+            bundles: None,
+            run_tokens: None,
+            run_sources: None,
+            run_reports: None,
         }
     }
 
@@ -94,6 +107,37 @@ impl QualityModule {
     #[must_use]
     pub fn with_patterns(mut self, patterns: Patterns) -> Self {
         self.patterns = patterns;
+        self
+    }
+
+    /// With the bundle route for job runners (decision 0090, point 2).
+    #[must_use]
+    pub fn with_bundles(mut self, pool: PgPool, services: BundleServices) -> Self {
+        self.bundles = Some((pool, services));
+        self
+    }
+
+    /// With the route that gives a run's job runner its Trino tokens
+    /// (decision 0090, point 7.1).
+    #[must_use]
+    pub fn with_run_tokens(mut self, pool: PgPool, services: RunTokenServices) -> Self {
+        self.run_tokens = Some((pool, services));
+        self
+    }
+
+    /// With the route that gives a run's job runner its source's secrets
+    /// (decision 0090, point 7.5).
+    #[must_use]
+    pub fn with_run_sources(mut self, pool: PgPool, services: RunSourceServices) -> Self {
+        self.run_sources = Some((pool, services));
+        self
+    }
+
+    /// With the route that takes a run's report from its job runner
+    /// (decision 0090, rulings 75 and 76).
+    #[must_use]
+    pub fn with_run_reports(mut self, pool: PgPool, services: RunReportServices) -> Self {
+        self.run_reports = Some((pool, services));
         self
     }
 
@@ -151,6 +195,13 @@ impl Module for QualityModule {
             migration!("0027_claim_in_maintenance"),
             migration!("0028_claim_without_trino_hold"),
             migration!("0029_gold_run_seq"),
+            migration!("0030_job_bundles"),
+            migration!("0031_field_quality_floating"),
+            migration!("0032_job_reports"),
+            migration!("0033_job_bundles_source"),
+            migration!("0034_schedule_fires"),
+            migration!("0035_chain_starts"),
+            migration!("0036_entity_lookups"),
         ]
     }
 
@@ -165,9 +216,33 @@ impl Module for QualityModule {
     }
 
     fn router(&self) -> Router {
-        match &self.workers {
+        let workers = match &self.workers {
             Some((pool, services)) => worker_api::routes(pool.clone(), services.clone()),
             None => Router::new(),
+        };
+        let workers = match &self.bundles {
+            Some((pool, services)) => {
+                workers.merge(bundle_api::routes(pool.clone(), services.clone()))
+            }
+            None => workers,
+        };
+        let workers = match &self.run_tokens {
+            Some((pool, services)) => {
+                workers.merge(run_token_api::routes(pool.clone(), services.clone()))
+            }
+            None => workers,
+        };
+        let workers = match &self.run_sources {
+            Some((pool, services)) => {
+                workers.merge(run_source_api::routes(pool.clone(), services.clone()))
+            }
+            None => workers,
+        };
+        match &self.run_reports {
+            Some((pool, services)) => {
+                workers.merge(run_report_api::routes(pool.clone(), services.clone()))
+            }
+            None => workers,
         }
     }
 
@@ -235,6 +310,7 @@ impl Module for QualityModule {
                 .merge(tables_api::routes(s.pool.clone()))
                 .merge(records_api::routes(s.pool.clone(), s.catalog.clone()))
                 .merge(console_api::routes(s.pool.clone()))
+                .merge(entity_lookup_api::routes(s.pool.clone(), s.sealer.clone()))
                 .merge(lake_tables::routes(s.pool.clone())),
             None => Router::new(),
         })

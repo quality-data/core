@@ -24,6 +24,11 @@ pub enum JobUserKind {
     Source,
     /// Creating and dropping a source's catalog; the target is the source.
     Catalog,
+    /// One console statement; the target names its run (decision 0090,
+    /// ruling 84).
+    Console,
+    /// One entity lookup; the target names its run (ruling 102).
+    Lookup,
 }
 
 impl JobUserKind {
@@ -36,6 +41,8 @@ impl JobUserKind {
             Self::Maint => "maint",
             Self::Source => "source",
             Self::Catalog => "catalog",
+            Self::Console => "console",
+            Self::Lookup => "lookup",
         }
     }
 
@@ -48,6 +55,8 @@ impl JobUserKind {
             Self::Maint,
             Self::Source,
             Self::Catalog,
+            Self::Console,
+            Self::Lookup,
         ]
         .into_iter()
         .find(|k| k.as_str() == s)
@@ -159,6 +168,11 @@ mod tests {
             (JobUserKind::Maint, "gold", "job_maint_gold"),
             (JobUserKind::Source, "core_db", "job_source_core_db"),
             (JobUserKind::Catalog, "core_db", "job_catalog"),
+            (
+                JobUserKind::Console,
+                "r0b9c6a1e000040008000000000000091",
+                "job_console_r0b9c6a1e000040008000000000000091",
+            ),
         ] {
             let s = JobSubject::new(job, kind, target).unwrap();
             assert_eq!(s.trino_user(), user);

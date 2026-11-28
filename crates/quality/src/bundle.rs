@@ -9,6 +9,14 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+mod steps;
+
+pub use steps::{fill, tokens, OnlyIfRows, Placeholder, PlaceholderFrom, PlaceholderType};
+use steps::{is_count_read, one_row_column};
+
+/// The kind whose bundle may carry a typed document (ruling 102).
+pub const ENTITY_KEY: &str = "entity_key";
+
 /// The JWS `typ` of a bundle, so no other token passes for one.
 pub const BUNDLE_TYP: &str = "qd-bundle+jwt";
 
@@ -30,7 +38,25 @@ pub enum Expect {
     },
     /// A statement that answers nothing but success (`CREATE`, `ALTER`).
     Done,
+    /// A read whose rows carry values (rulings 79 and 80): exactly these
+    /// columns, at most `max_rows` rows, never more than
+    /// [`MAX_VALUES_ROWS`]. Run as the job's own user; its rows go to
+    /// `POST …/runs/{run}/rows`, never into the report, and the job runner
+    /// logs none of them.
+    Values {
+        columns: Vec<(String, String)>,
+        max_rows: u64,
+    },
+    /// A values read whose columns come with its answer, every value text
+    /// (ruling 84: the console's statement, whose columns are not known
+    /// before it runs); at most `max_rows`, never more than
+    /// [`MAX_VALUES_ROWS`], posted on the same values route.
+    Text { max_rows: u64 },
 }
+
+/// The most rows a values read may give: a page of a source's records and
+/// the one more that says there are others (decision 0049).
+pub const MAX_VALUES_ROWS: u64 = 1_001;
 
 impl Expect {
     /// An `INSERT`'s count.
@@ -45,6 +71,11 @@ impl Expect {
         Self::Count {
             update_types: vec!["DELETE".into()],
         }
+    }
+
+    /// Whether it is a values read.
+    pub fn is_values(&self) -> bool {
+        matches!(self, Self::Values { .. } | Self::Text { .. })
     }
 }
 
@@ -73,6 +104,28 @@ pub struct BundleStatement {
     /// extra credentials (point 7.5).
     #[serde(default)]
     pub reads_source: bool,
+    /// Run only when an earlier count of the bundle showed rows (amendment
+    /// A1 of decision 0090): gold's count-then-delete, and the guard counts
+    /// that pick one percentile method.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub only_if_rows: Option<OnlyIfRows>,
+    /// The gold table it writes, `<catalog>.<schema>.<table>`, whose
+    /// mutex the operator holds while it runs (decision 0090, ruling
+    /// 92(b): one writer per gold table, point 4); signed with the rest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lock: Option<String>,
+}
+
+/// The gold table a statement writes (`INSERT INTO` or `DELETE FROM` one
+/// of `lake.quality_gold`'s tables), as its lock names it.
+pub fn gold_lock(sql: &str) -> Option<String> {
+    const GOLD: &str = "\"lake\".\"quality_gold\".\"";
+    let rest = sql
+        .strip_prefix("INSERT INTO ")
+        .or_else(|| sql.strip_prefix("DELETE FROM "))?
+        .strip_prefix(GOLD)?;
+    let table = &rest[..rest.find('"')?];
+    is_statement_id(table).then(|| format!("lake.quality_gold.{table}"))
 }
 
 /// The job contract (point 2).
@@ -88,6 +141,9 @@ pub struct Bundle {
     pub run_seq: Option<u64>,
     pub catalog_commit: Option<String>,
     pub compiler_version: String,
+    /// The tokens its statements hold, declared before any is filled.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub placeholders: Vec<Placeholder>,
     pub statements: Vec<BundleStatement>,
 }
 
@@ -121,6 +177,78 @@ impl Bundle {
                 .statements
                 .iter()
                 .all(|s| is_statement_id(&s.id) && ids.insert(s.id.as_str()))
+            && self.placeholders_declared()
+            && self
+                .statements
+                .iter()
+                .enumerate()
+                .all(|(i, s)| self.steps_checked(i, s))
+            && self.statements.iter().all(values_checked)
+            && self
+                .statements
+                .iter()
+                .all(|s| s.lock.is_none() || s.lock == gold_lock(&s.sql))
+    }
+
+    /// The statement `id` among the first `before`, if any.
+    fn earlier(&self, id: &str, before: usize) -> Option<&BundleStatement> {
+        self.statements[..before].iter().find(|s| s.id == id)
+    }
+
+    /// Each placeholder named once, read from a column of an earlier
+    /// one-row answer whose type it takes (`bigint`).
+    fn placeholders_declared(&self) -> bool {
+        let mut names = std::collections::BTreeSet::new();
+        self.placeholders.iter().all(|p| {
+            let from_answer = match (&p.ty, &p.from) {
+                // A typed document: only an entity lookup's (ruling 102).
+                (PlaceholderType::Text, None) => self.kind == ENTITY_KEY,
+                (PlaceholderType::Text, Some(_)) | (_, None) => false,
+                (_, Some(from)) => {
+                    let source = self.statements.iter().find(|s| s.id == from.statement);
+                    source.is_some_and(|s| one_row_column(&s.expects, &from.column))
+                }
+            };
+            is_statement_id(&p.name) && names.insert(p.name.as_str()) && from_answer
+        })
+    }
+
+    /// A statement's tokens declared and filled from statements before it,
+    /// and its `only_if_rows` waiting on an earlier count.
+    fn steps_checked(&self, i: usize, s: &BundleStatement) -> bool {
+        let filled = tokens(&s.sql).is_some_and(|names| {
+            names.iter().all(|n| {
+                self.placeholders
+                    .iter()
+                    .find(|p| p.name == *n)
+                    .is_some_and(|p| match &p.from {
+                        Some(from) => self.earlier(&from.statement, i).is_some(),
+                        // A document goes only into the lookup's values read.
+                        None => s.expects.is_values(),
+                    })
+            })
+        });
+        let guarded = s.only_if_rows.as_ref().is_none_or(|g| {
+            self.earlier(&g.after, i)
+                .is_some_and(|c| is_count_read(&c.expects))
+        });
+        filled && guarded
+    }
+}
+
+/// A values read within the hard limit, with columns, as the job's own
+/// user: the report user reads gold, which holds no values.
+fn values_checked(s: &BundleStatement) -> bool {
+    match &s.expects {
+        Expect::Values { columns, max_rows } => {
+            !columns.is_empty()
+                && (1..=MAX_VALUES_ROWS).contains(max_rows)
+                && s.run_as == RunAs::Job
+        }
+        Expect::Text { max_rows } => {
+            (1..=MAX_VALUES_ROWS).contains(max_rows) && s.run_as == RunAs::Job
+        }
+        _ => true,
     }
 }
 
@@ -209,12 +337,15 @@ mod tests {
             run_seq: Some(7),
             catalog_commit: Some("c0ffee".into()),
             compiler_version: "quality-rules 0.1.0".into(),
+            placeholders: vec![],
             statements: vec![BundleStatement {
                 id: "rules".into(),
                 sql: "INSERT INTO t SELECT 1".into(),
                 expects: Expect::insert(),
                 run_as: RunAs::Job,
                 reads_source: false,
+                only_if_rows: None,
+                lock: None,
             }],
         }
     }
@@ -284,5 +415,71 @@ mod tests {
             verify(&key, &not_a_bundle, &b.job_id, &b.digest()),
             Err(BundleError::Shape)
         );
+    }
+
+    #[test]
+    fn a_values_read_is_bounded_and_run_as_the_job() {
+        let values = |max_rows| Expect::Values {
+            columns: vec![("name".into(), "varchar".into())],
+            max_rows,
+        };
+        let mut b = bundle();
+        b.statements[0].expects = values(MAX_VALUES_ROWS);
+        b.statements[0].reads_source = true;
+        assert!(b.well_formed());
+        assert!(b.canonical().contains(
+            "\"expects\":{\"kind\":\"values\",\"columns\":[[\"name\",\"varchar\"]],\"max_rows\":1001}"
+        ));
+        let refused = |change: &dyn Fn(&mut BundleStatement)| {
+            let mut b = bundle();
+            b.statements[0].expects = values(10);
+            change(&mut b.statements[0]);
+            !b.well_formed()
+        };
+        assert!(refused(&|s| s.expects = values(MAX_VALUES_ROWS + 1)));
+        assert!(refused(&|s| s.expects = values(0)));
+        assert!(refused(&|s| s.run_as = RunAs::Report));
+        assert!(!refused(&|s| s.expects = Expect::Text { max_rows: 201 }));
+        assert!(refused(&|s| s.expects = Expect::Text { max_rows: 0 }));
+        assert!(refused(&|s| {
+            s.expects = Expect::Text { max_rows: 201 };
+            s.run_as = RunAs::Report;
+        }));
+        assert!(refused(&|s| {
+            s.expects = Expect::Values {
+                columns: vec![],
+                max_rows: 1,
+            }
+        }));
+    }
+
+    #[test]
+    fn a_gold_write_is_locked_by_its_table_and_nothing_else_is() {
+        assert_eq!(
+            gold_lock("INSERT INTO \"lake\".\"quality_gold\".\"rule_results\" (dataset) SELECT 1")
+                .as_deref(),
+            Some("lake.quality_gold.rule_results")
+        );
+        assert_eq!(
+            gold_lock("DELETE FROM \"lake\".\"quality_gold\".\"findings\" WHERE run_id = 'r'")
+                .as_deref(),
+            Some("lake.quality_gold.findings")
+        );
+        for sql in [
+            "SELECT * FROM \"lake\".\"quality_gold\".\"findings\"",
+            "INSERT INTO \"lake\".\"loans_bronze\".\"loans\" SELECT 1",
+            "DELETE FROM \"lake\".\"quality_scratch\".\"record_icd\"",
+        ] {
+            assert_eq!(gold_lock(sql), None, "{sql}");
+        }
+        let mut b = bundle();
+        b.statements[0].sql = "INSERT INTO \"lake\".\"quality_gold\".\"cells\" SELECT 1".into();
+        b.statements[0].lock = gold_lock(&b.statements[0].sql);
+        assert!(b.well_formed());
+        assert!(b
+            .canonical()
+            .contains("\"lock\":\"lake.quality_gold.cells\""));
+        b.statements[0].lock = Some("lake.quality_gold.findings".into());
+        assert!(!b.well_formed(), "a lock that is not its table's");
     }
 }

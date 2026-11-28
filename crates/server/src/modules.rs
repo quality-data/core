@@ -16,6 +16,7 @@ use infrastructure::lake_policies::SessionPolicies;
 use infrastructure::module_migrations::PgModuleMigrator;
 use infrastructure::standard_lake::StandardLake;
 use infrastructure::{PgAuditRepository, PgLakeAdminKeys, PgPool, SecretBox};
+use quality::bundle_api::{self, BundleServices};
 use quality::catalog::Catalog;
 use quality::draft_api::DraftCatalog;
 use quality::job_map::Drafts;
@@ -24,6 +25,7 @@ use quality::lake::{LakeAccess, LakeIssuer, TableCatalog};
 use quality::manifest::ManifestStore;
 use quality::module::QualityModule;
 use quality::proposal::Patterns;
+use quality::run_token_api::RunTokenServices;
 use quality::source_store::Sealer;
 use quality::worker_api::WorkerServices;
 use texts::Language;
@@ -55,6 +57,7 @@ pub(crate) fn serving(
     secret_box: SecretBox,
     dolt: Option<Arc<DoltSnapshots>>,
 ) -> Result<ModuleRegistry, Box<dyn std::error::Error>> {
+    crate::chains_wiring::spawn(pool, provider.clone())?;
     let lake = standard_lake(pool, &secret_box)?;
     let manifests = lake
         .clone()
@@ -66,6 +69,34 @@ pub(crate) fn serving(
     let catalog = dolt.clone().map(|d| d as Arc<dyn Catalog>);
     let drafts = dolt.clone().map(|d| d as Arc<dyn Drafts>);
     let review = dolt.map(|d| d as Arc<dyn DraftCatalog>);
+    let bundles = provider
+        .clone()
+        .and_then(|p| bundle_services(p, pool.clone(), catalog.clone(), manifests.clone()));
+    let run_tokens = provider
+        .clone()
+        .and_then(|p| run_token_services(p, pool.clone()));
+    let run_reports = provider.clone().and_then(|p| {
+        p.sign_es256(quality::bundle::BUNDLE_TYP, "{}")?;
+        Some(quality::run_report_api::RunReportServices {
+            tokens: internal_tokens(p.clone(), pool),
+            signer: Arc::new(ProviderBundles(p)),
+            drafts: drafts.clone(),
+            proposal_alerts: Some(proposal_alerts(Language::Es)),
+            catalog: catalog.clone(),
+            sealer: Some(Arc::new(BoxSealer(secret_box.clone()))),
+            log: Some(Arc::new(Issues(Arc::new(PgAuditRepository::new(
+                pool.clone(),
+            ))))),
+        })
+    });
+    let run_sources = provider.clone().zip(catalog.clone()).map(|(p, catalog)| {
+        quality::run_source_api::RunSourceServices {
+            tokens: internal_tokens(p, pool),
+            sealer: Arc::new(BoxSealer(secret_box.clone())),
+            catalog,
+            log: Arc::new(Issues(Arc::new(PgAuditRepository::new(pool.clone())))),
+        }
+    });
     let quality = match provider {
         Some(p) => QualityModule::serving(
             pool.clone(),
@@ -89,6 +120,22 @@ pub(crate) fn serving(
     .with_patterns(semantic_patterns()?);
     let quality = match review {
         Some(review) => quality.with_drafts(review),
+        None => quality,
+    };
+    let quality = match bundles {
+        Some(services) => quality.with_bundles(pool.clone(), services),
+        None => quality,
+    };
+    let quality = match run_tokens {
+        Some(services) => quality.with_run_tokens(pool.clone(), services),
+        None => quality,
+    };
+    let quality = match run_reports {
+        Some(services) => quality.with_run_reports(pool.clone(), services),
+        None => quality,
+    };
+    let quality = match run_sources {
+        Some(services) => quality.with_run_sources(pool.clone(), services),
         None => quality,
     };
     Ok(ModuleRegistry::new().register(quality))
@@ -233,6 +280,13 @@ impl ManifestStore for LakeManifests {
             .map(|w| w == WriteOnce::Written)
             .map_err(|e| e.to_string())
     }
+
+    async fn get(&self, warehouse: &str, key: &str) -> Result<Option<Vec<u8>>, String> {
+        self.0
+            .read_object(warehouse, key)
+            .await
+            .map_err(|e| e.to_string())
+    }
 }
 
 /// A job's lake credentials, within its grant, from the lake's STS.
@@ -266,6 +320,154 @@ impl quality::worker_api::MachineTokens for ProviderTokens {
             .0
             .machine_caller(token, quality::worker_api::AUDIENCE)?;
         Some(quality::worker_api::MachineCaller { client, machine })
+    }
+}
+
+/// The bundle route's services (decision 0090, point 2): bundles signed
+/// with the provider's ES256 key, asked with machine tokens for the job
+/// runners' audience; `None` without that key.
+fn bundle_services(
+    p: AuthorizationServer,
+    pool: PgPool,
+    catalog: Option<Arc<dyn Catalog>>,
+    manifests: Option<Arc<dyn ManifestStore>>,
+) -> Option<BundleServices> {
+    p.sign_es256(quality::bundle::BUNDLE_TYP, "{}")?;
+    Some(BundleServices {
+        tokens: internal_tokens(p.clone(), &pool),
+        signer: Arc::new(ProviderBundles(p)),
+        compiler: Arc::new(crate::job_compiler::TrinoJobs {
+            pool,
+            catalog,
+            manifests,
+        }),
+    })
+}
+
+/// The run token route's services (decision 0090, point 7.1): asked with
+/// the job runners' machine tokens, recorded in the audit log, issued with
+/// the provider's ES256 key; `None` without that key.
+fn run_token_services(p: AuthorizationServer, pool: PgPool) -> Option<RunTokenServices> {
+    p.sign_es256("at+jwt", "{}")?;
+    Some(RunTokenServices {
+        tokens: internal_tokens(p.clone(), &pool),
+        issuer: Arc::new(crate::trino_tokens::ProviderTrinoTokens::new(
+            p,
+            pool.clone(),
+        )),
+        log: Arc::new(Issues(Arc::new(PgAuditRepository::new(pool)))),
+    })
+}
+
+/// The module that provides orchestration and the machine clients of those
+/// that require it, kept from the installed modules (decision 0090, rulings
+/// 104 and 109), read again every minute.
+fn orchestration(pool: &PgPool) -> quality::orchestrator_callers::Provider {
+    static PROVIDER: std::sync::OnceLock<quality::orchestrator_callers::Provider> =
+        std::sync::OnceLock::new();
+    PROVIDER
+        .get_or_init(|| {
+            let provider = quality::orchestrator_callers::Provider::default();
+            let store = infrastructure::PgMaintenanceStore::new(pool.clone());
+            let clients = infrastructure::oidc::PgOidcClients::new(pool.clone());
+            let kept = provider.clone();
+            if let Ok(rt) = tokio::runtime::Handle::try_current() {
+                rt.spawn(async move {
+                    loop {
+                        let modules = match store.modules().await {
+                            Ok(modules) => modules.unwrap_or(serde_json::Value::Null),
+                            Err(e) => {
+                                tracing::warn!("reading the installed modules: {e}");
+                                tokio::time::sleep(Duration::from_secs(60)).await;
+                                continue;
+                            }
+                        };
+                        kept.update(&modules);
+                        if let Some(found) = requirers(&clients, &modules).await {
+                            kept.update_requirers(found);
+                        }
+                        tokio::time::sleep(Duration::from_secs(60)).await;
+                    }
+                });
+            }
+            provider
+        })
+        .clone()
+}
+
+/// The machine clients of the installed modules that require orchestration
+/// (ruling 109): ruling 47 grants the job runners' audience, `quality-jobs`,
+/// only to the client of a module that requires it. `None` when the clients
+/// cannot be read, so those known stay.
+async fn requirers(
+    clients: &dyn auth_gateway::OidcClientRegistry,
+    modules: &serde_json::Value,
+) -> Option<Vec<String>> {
+    let names = modules
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|m| m.get("name")?.as_str());
+    let mut found = Vec::new();
+    for name in names {
+        let registered = match clients.module_clients(name).await {
+            Ok(registered) => registered,
+            Err(e) => {
+                tracing::warn!("reading the clients of module {name}: {e}");
+                return None;
+            }
+        };
+        found.extend(
+            registered
+                .into_iter()
+                .filter(|c| {
+                    quality::orchestrator_callers::is_requirers_client(
+                        c.settings.client_credentials,
+                        &c.settings.audiences,
+                    )
+                })
+                .map(|c| c.id.as_str().to_owned()),
+        );
+    }
+    Some(found)
+}
+
+/// Machine tokens of the core's audience from the orchestration provider's
+/// machine client only (rulings 97 and 104): every internal quality route.
+fn internal_tokens(
+    p: AuthorizationServer,
+    pool: &PgPool,
+) -> Arc<dyn quality::worker_api::MachineTokens> {
+    Arc::new(quality::orchestrator_callers::OrchestratorOnly {
+        tokens: Arc::new(BundleTokens(p)),
+        provider: orchestration(pool),
+    })
+}
+
+/// The job runners' tokens for the bundle route, as the provider issued
+/// them.
+struct BundleTokens(AuthorizationServer);
+
+impl quality::worker_api::MachineTokens for BundleTokens {
+    fn client(&self, token: &str) -> Option<quality::worker_api::MachineCaller> {
+        let (client, machine) = self.0.machine_caller(token, bundle_api::AUDIENCE)?;
+        Some(quality::worker_api::MachineCaller { client, machine })
+    }
+}
+
+/// The provider's ES256 key, which signs job bundles.
+struct ProviderBundles(AuthorizationServer);
+
+impl quality::bundle::BundleSigner for ProviderBundles {
+    fn sign(&self, typ: &str, claims: &str) -> String {
+        // `bundle_services` wires it only once the key has signed.
+        self.0
+            .sign_es256(typ, claims)
+            .expect("the provider's ES256 key")
+    }
+
+    fn verify(&self, typ: &str, token: &str) -> Option<String> {
+        self.0.verify_es256(typ, token)
     }
 }
 
