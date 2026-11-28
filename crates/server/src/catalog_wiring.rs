@@ -40,6 +40,24 @@ impl application::DoltStore for DoltSnapshots {
     }
 }
 
+/// The catalog's files as the quality core sees them.
+fn snapshot_of(f: infrastructure::catalog_dolt::CatalogFiles) -> CatalogSnapshot {
+    CatalogSnapshot {
+        commit: f.commit,
+        mapping: f.mapping,
+        rules: f
+            .rules
+            .into_iter()
+            .map(|(file, yaml)| RulesSource { file, yaml })
+            .collect(),
+        others: f
+            .others
+            .into_iter()
+            .map(|(dataset, yaml)| DatasetMapping { dataset, yaml })
+            .collect(),
+    }
+}
+
 #[async_trait::async_trait]
 impl Catalog for DoltSnapshots {
     async fn snapshot(&self, dataset: &str) -> Result<Option<CatalogSnapshot>, String> {
@@ -48,20 +66,20 @@ impl Catalog for DoltSnapshots {
             .files(quality::catalog::DATABASE, dataset)
             .await
             .map_err(|e| e.to_string())?;
-        Ok(files.map(|f| CatalogSnapshot {
-            commit: f.commit,
-            mapping: f.mapping,
-            rules: f
-                .rules
-                .into_iter()
-                .map(|(file, yaml)| RulesSource { file, yaml })
-                .collect(),
-            others: f
-                .others
-                .into_iter()
-                .map(|(dataset, yaml)| DatasetMapping { dataset, yaml })
-                .collect(),
-        }))
+        Ok(files.map(snapshot_of))
+    }
+
+    async fn snapshot_at(
+        &self,
+        dataset: &str,
+        commit: &str,
+    ) -> Result<Option<CatalogSnapshot>, String> {
+        let files = self
+            .0
+            .files_at_commit(quality::catalog::DATABASE, commit, dataset)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(files.map(snapshot_of))
     }
 
     async fn mappings(&self) -> Result<Vec<DatasetMapping>, String> {
