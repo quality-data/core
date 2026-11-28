@@ -7400,6 +7400,13 @@
           },
           "name": {
             "type": "string"
+          },
+          "nullable": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the source lets it be empty, as Trino's listing says\n(decision 0090, ruling 86); none from an older listing. No listing\nnames a primary key: the person chooses it when mapping."
           }
         }
       },
