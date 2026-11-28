@@ -129,11 +129,19 @@ fn a_reference_reads_the_table_the_platform_resolved() {
         Table {
             path: vec!["lake".into(), "advisors_silver".into(), "advisors".into()],
             filter: None,
+            pinned: None,
         },
     );
     assert_eq!(
         expr(&e, Engine::Trino, &tables).unwrap().text,
         "(\"CodigoAsesor\" IN (SELECT \"Codigo\" FROM \"lake\".\"advisors_silver\".\"advisors\" WHERE \"Codigo\" IS NOT NULL))"
+    );
+    // Pinned by the core (ruling 61): the relation is read, not the path.
+    tables.get_mut("advisors").unwrap().pinned =
+        Some("(SELECT * FROM a FOR VERSION AS OF 7) p".into());
+    assert_eq!(
+        expr(&e, Engine::Trino, &tables).unwrap().text,
+        "(\"CodigoAsesor\" IN (SELECT \"Codigo\" FROM (SELECT * FROM a FOR VERSION AS OF 7) p WHERE \"Codigo\" IS NOT NULL))"
     );
 }
 
@@ -171,6 +179,7 @@ fn a_reference_may_keep_only_some_records() {
         Table {
             path: vec!["asesores".into()],
             filter,
+            pinned: None,
         },
     );
     let s = expr(&e, Engine::DuckDb, &tables).unwrap();
