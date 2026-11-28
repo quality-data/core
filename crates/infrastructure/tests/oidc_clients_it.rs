@@ -165,3 +165,25 @@ async fn oidc_clients_the_commands_register_a_machine_role_without_a_secret() {
     let with_uri = "qd-api --redirect-uri https://x/cb";
     assert!(update_client(&pool, &args(with_uri)).await.is_err());
 }
+
+/// Ruling 60 of decision 0090: the API's own client for jobs' Trino tokens
+/// is registered once, as a machine client for `trino` signing ES256, and
+/// a second start leaves it (and any change a person made) as it is.
+#[tokio::test]
+async fn the_own_client_for_trino_is_registered_once() {
+    let db = testkit::spawn_test_db().await;
+    let pool = app_pool(&db).await;
+    let ensure = || infrastructure::oidc::ensure_own_client(&pool, "qd-api-jobs", "Jobs", "trino");
+    assert!(ensure().await.unwrap());
+    assert!(!ensure().await.unwrap());
+    let found = PgOidcClients::new(pool.clone())
+        .find(&ClientId::parse("qd-api-jobs").unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(found.machine());
+    assert_eq!(found.settings.audiences, ["trino"]);
+    assert_eq!(found.settings.token_alg, auth_gateway::SigningAlg::ES256);
+    assert!(matches!(found.auth, ClientAuth::Secret { .. }));
+    assert!(found.redirect_uris.is_empty());
+}

@@ -111,6 +111,16 @@ describe("a dataset's profile", () => {
           pattern: "9999.9",
           pattern_share: 0.75,
         },
+        {
+          field: "Rate",
+          records: 100,
+          empty: 0,
+          empty_share: 0,
+          distinct_values: 90,
+          pattern: null,
+          floating: true,
+          pattern_share: 0,
+        },
       ],
       "en",
       tr,
@@ -118,6 +128,7 @@ describe("a dataset's profile", () => {
     expect(f.plot.table.rows).toEqual([
       ["Note", "100", "100.0%", "0", "—", "—"],
       ["Amount", "20", "20.0%", "70", "9999.9", "75.0%"],
+      ["Rate", "0", "0.0%", "90", "[floating]", "0.0%"],
     ]);
   });
 });

@@ -11,7 +11,7 @@ use crate::gold_write::Run;
 use crate::{Error, Statement};
 
 fn plain(sql: String) -> Statement {
-    Statement { sql, cut_params: 0 }
+    Statement { sql }
 }
 
 /// The tombstone: the run's `run_summary` row with no detail rows; every
@@ -33,10 +33,10 @@ pub fn tombstone(run: &Run<'_>, job_id: &str) -> Result<Statement, Error> {
         })
         .collect::<Result<_, _>>()?;
     Ok(plain(format!(
-        "INSERT INTO {GOLD}.\"run_summary\" (dataset, cut, run_id, {}) VALUES ({}, DATE {}, {}, {})",
+        "INSERT INTO {GOLD}.\"run_summary\" (dataset, cut, run_id, {}) VALUES ({}, {}, {}, {})",
         cols.join(", "),
         quote_text(run.dataset)?,
-        quote_text(run.cut)?,
+        run.cut.literal(),
         quote_text(run.run_id)?,
         values.join(", ")
     )))
@@ -107,12 +107,33 @@ pub fn insert_slas(dataset: &str, run_id: &str, slas: &[Sla]) -> Result<Option<S
     ))))
 }
 
-fn older(dataset: &str, run_id: &str) -> Result<String, Error> {
+fn slas_of(dataset: &str, run_id: &str, op: &str) -> Result<String, Error> {
     Ok(format!(
-        "{} AND run_id <> {}",
+        "{} AND run_id {op} {}",
         of_dataset("remediation_slas", dataset)?,
         quote_text(run_id)?
     ))
+}
+
+fn older(dataset: &str, run_id: &str) -> Result<String, Error> {
+    slas_of(dataset, run_id, "<>")
+}
+
+/// What an earlier attempt of run `run_id` wrote, counted before its
+/// delete: a retry keeps its `run_id` (ruled by the user 2026-11-25).
+pub fn run_slas(dataset: &str, run_id: &str) -> Result<Statement, Error> {
+    Ok(plain(format!(
+        "SELECT count(*) FROM {}",
+        slas_of(dataset, run_id, "=")?
+    )))
+}
+
+/// An earlier attempt's SLAs of run `run_id` go, before the insert.
+pub fn delete_run_slas(dataset: &str, run_id: &str) -> Result<Statement, Error> {
+    Ok(plain(format!(
+        "DELETE FROM {}",
+        slas_of(dataset, run_id, "=")?
+    )))
 }
 
 /// The older runs' SLAs of the dataset, counted before their delete.
@@ -132,16 +153,16 @@ pub fn delete_older_slas(dataset: &str, run_id: &str) -> Result<Statement, Error
 mod tests {
     use super::*;
 
-    const RUN: Run<'static> = Run {
-        dataset: "loans",
-        cut: "2026-10-31",
-        run_id: "r-3",
-        run_seq: 9,
-    };
-
     #[test]
     fn a_retracted_cut_is_a_tombstone_then_its_older_rows_go() {
-        let t = tombstone(&RUN, "job-9").unwrap().sql;
+        let cut = quality_rules_sql::Cut::parse("2026-10-31").unwrap();
+        let run = Run {
+            dataset: "loans",
+            cut: &cut,
+            run_id: "r-3",
+            run_seq: 9,
+        };
+        let t = tombstone(&run, "job-9").unwrap().sql;
         assert!(t.starts_with(
             "INSERT INTO \"lake\".\"quality_gold\".\"run_summary\" (dataset, cut, run_id, \"run_seq\""
         ));
@@ -178,6 +199,14 @@ mod tests {
         assert!(s.contains("('loans', 'r-1', 'Office', 'O-1', 5, current_timestamp)"));
         assert!(s.contains("CAST(NULL AS VARCHAR), 10,"));
         assert!(!s.contains("cut"));
+        assert!(delete_run_slas("loans", "r-1")
+            .unwrap()
+            .sql
+            .ends_with("AND run_id = 'r-1'"));
+        assert!(run_slas("loans", "r-1")
+            .unwrap()
+            .sql
+            .starts_with("SELECT count(*) FROM"));
         assert!(delete_older_slas("loans", "r-1")
             .unwrap()
             .sql

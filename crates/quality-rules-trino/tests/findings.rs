@@ -3,7 +3,7 @@
 
 use quality::mapping::Mapping;
 use quality_rules_compile::{compile, FieldType, Schema};
-use quality_rules_sql::Tables;
+use quality_rules_sql::{Cut, Tables};
 use quality_rules_trino::{finding_groups, findings, queues, Findings, IcdRule, SCRATCH};
 
 const MAPPING: &str = "dataset: loans
@@ -30,6 +30,10 @@ rules:
 
 const JOB: &str = "0b9c6a1e-0000-4000-8000-000000000001";
 
+fn cut() -> Cut {
+    Cut::parse("2026-10-31").unwrap()
+}
+
 fn setup() -> (Mapping, Vec<IcdRule>) {
     let mapping = Mapping::parse(MAPPING).unwrap();
     let mut schema = Schema::default();
@@ -47,7 +51,7 @@ fn setup() -> (Mapping, Vec<IcdRule>) {
     assert!(problems.is_empty(), "{problems:?}");
     let rules = compiled
         .iter()
-        .map(|c| IcdRule::of(c, &Tables::new()).unwrap())
+        .map(|c| IcdRule::of(c, &Tables::new(), &cut()).unwrap())
         .collect();
     (mapping, rules)
 }
@@ -55,15 +59,15 @@ fn setup() -> (Mapping, Vec<IcdRule>) {
 #[test]
 fn the_findings_unnest_the_outcomes_and_carry_the_previous_since() {
     let (mapping, rules) = setup();
-    let first = findings(JOB, &mapping, &rules, None).unwrap();
-    assert_eq!(first.cut_params, 1);
+    let first = findings(JOB, &mapping, &rules, None, &cut()).unwrap();
+    assert!(!first.sql.contains('?'));
     assert!(first
         .sql
         .contains("CROSS JOIN UNNEST(s.r) WITH ORDINALITY AS o(v, i)"));
     assert!(first
         .sql
         .contains("element_at(ARRAY['P1', 'A1', 'X1'], u.i)"));
-    assert!(first.sql.ends_with("CAST(? AS DATE) AS since FROM f "));
+    assert!(first.sql.ends_with("DATE '2026-10-31' AS since FROM f "));
     // Phone is the SFC cell: its closeness comes from the active rows.
     assert!(first
         .sql
@@ -79,11 +83,11 @@ fn the_findings_unnest_the_outcomes_and_carry_the_previous_since() {
         findings: "prev_f",
         groups: "prev_g",
     };
-    let next = findings(JOB, &mapping, &rules, Some(before)).unwrap();
+    let next = findings(JOB, &mapping, &rules, Some(before), &cut()).unwrap();
     assert!(next
         .sql
         .contains("LEFT JOIN prev_f q ON q.record = f.record AND q.rule = f.rule"));
-    assert!(next.sql.contains("COALESCE(q.since, CAST(? AS DATE))"));
+    assert!(next.sql.contains("COALESCE(q.since, DATE '2026-10-31')"));
 }
 
 #[test]
