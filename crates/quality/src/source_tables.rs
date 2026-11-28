@@ -32,8 +32,9 @@ pub struct SourceTable {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct SourceColumn {
     pub name: String,
-    /// As the engine reads the source's type: DuckDB's (`INTEGER`,
-    /// `DECIMAL(14,2)`).
+    /// As the engine reads the source's type: Trino's `information_schema`
+    /// name from a Trino `tables` job (`integer`, `decimal(14,2)`; decision
+    /// 0090, ruling 68), DuckDB's from an older listing.
     pub data_type: String,
 }
 

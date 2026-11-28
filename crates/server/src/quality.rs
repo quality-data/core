@@ -1,26 +1,28 @@
-//! `server quality rules lint | explain | test` (decision 0019): the rule
-//! language on local files, for people and for CI. Any dataset: each rules
-//! file runs against the dataset it names, loaded from a Parquet file with
-//! `--data <dataset>=<file>`, its schema read from that file; its
-//! references read the other datasets loaded. With `--mapping` a dataset
-//! is read through its mapping (decision 0020): `--data` then names the
-//! mapping's source, and the rules name the mapping's fields. `test` prints counts per rule,
-//! never values (the data may be a cooperative's).
+//! `server quality rules lint | explain | tidy` (decision 0019): the rule
+//! language on local files, for people and for CI. Each rules file is
+//! checked against the mapping of the dataset it names, given with
+//! `--mapping` (decision 0090, ruling 63): its fields and types are the
+//! schema, and its references are the other mappings given. No data is
+//! read here: a rule's examples, and a rule test, run on Trino as a
+//! `rule_test` job against a chosen cut (rulings 54 and 63).
 //!
 //! ```text
-//! server quality rules lint    FILE... --data DATASET=PARQUET... [--mapping FILE]... [--cut DATE] [--type FIELD=email]... [--lang es|en]
-//! server quality rules explain FILE... --data DATASET=PARQUET... [--lang es|en]
-//! server quality rules test    FILE... --data DATASET=PARQUET... --cut DATE [--lang es|en]
+//! server quality rules lint    FILE... --mapping FILE... [--type FIELD=email]... [--lang es|en]
+//! server quality rules explain FILE... --mapping FILE... [--lang es|en]
 //! server quality rules tidy    FILE... [--check] [--lang es|en]
 //! ```
 //!
-//! `tidy` (decision 0041) needs no data: it rewrites each file tidied, or
-//! with `--check` names those that would change and fails.
+//! `tidy` (decision 0041) needs no mapping: it rewrites each file tidied,
+//! or with `--check` names those that would change and fails.
+
+use std::collections::BTreeMap;
 
 use quality::mapping::{Mapping, MappingError};
-use quality_rules::lint::{lint, tidy, Finding, Report, Severity};
+use quality_rules::check::{FieldType, Schema};
+use quality_rules::lint::{lint, tidy, Finding, Severity};
+use quality_rules::sql::{Table, Tables};
+use quality_rules::tree::parse_expr;
 use quality_rules::{explain, model::RulesFile};
-use quality_rules_duckdb::{Counts, Runner};
 use texts::{text_in, Language};
 
 type Failure = Box<dyn std::error::Error>;
@@ -28,10 +30,8 @@ type Failure = Box<dyn std::error::Error>;
 struct Options {
     command: String,
     files: Vec<String>,
-    data: Vec<(String, String)>,
     mappings: Vec<String>,
     emails: Vec<String>,
-    cut: Option<String>,
     check: bool,
     language: Language,
 }
@@ -41,11 +41,20 @@ pub(crate) fn run() -> Result<(), Failure> {
     if o.command == "tidy" {
         return tidy_files(&o);
     }
-    let runner = load(&o)?;
+    let mappings = load(&o)?;
     let mut blocking = false;
+    let mut examples = false;
     for path in &o.files {
         let yaml = std::fs::read_to_string(path)?;
-        blocking |= one_file(&o, &runner, path, &yaml)?;
+        let (b, e) = one_file(&o, &mappings, path, &yaml)?;
+        blocking |= b;
+        examples |= e;
+    }
+    if examples {
+        eprintln!(
+            "{}",
+            text_in(o.language, "quality.cli.examplesOnTrino", &[])
+        );
     }
     if blocking {
         return Err(text_in(o.language, "quality.cli.blocked", &[]).into());
@@ -77,44 +86,15 @@ fn tidy_files(o: &Options) -> Result<(), Failure> {
     Ok(())
 }
 
-/// The datasets: through their mapping when they have one (`--data` names
-/// the mapping's source), as their Parquet file has them otherwise.
-fn load(o: &Options) -> Result<Runner, Failure> {
-    let mut runner = Runner::new()?;
-    let mut mapped_sources = Vec::new();
+/// The mappings given, by dataset.
+fn load(o: &Options) -> Result<BTreeMap<String, Mapping>, Failure> {
+    let mut out = BTreeMap::new();
     for path in &o.mappings {
         let mapping = Mapping::parse(&std::fs::read_to_string(path)?)
             .map_err(|e| mapping_error(o.language, path, &e))?;
-        let source = &mapping.source.value;
-        let (_, parquet) = o
-            .data
-            .iter()
-            .find(|(name, _)| name == source)
-            .ok_or_else(|| {
-                text_in(
-                    o.language,
-                    "quality.cli.noData",
-                    &[("dataset", source.clone())],
-                )
-            })?;
-        runner.load_mapped(&mapping, parquet).map_err(|e| match e {
-            quality_rules_duckdb::Error::InvalidColumnName(column) => text_in(
-                o.language,
-                "quality.cli.mapping.noColumn",
-                &[("column", column), ("source", source.clone())],
-            ),
-            other => other.to_string(),
-        })?;
-        mapped_sources.push(source.clone());
+        out.insert(mapping.dataset.value.clone(), mapping);
     }
-    for (dataset, path) in o
-        .data
-        .iter()
-        .filter(|(name, _)| !mapped_sources.contains(name))
-    {
-        runner.load(dataset, path)?;
-    }
-    Ok(runner)
+    Ok(out)
 }
 
 pub(crate) fn mapping_error(language: Language, path: &str, e: &MappingError) -> String {
@@ -164,70 +144,83 @@ pub(crate) fn mapping_error(language: Language, path: &str, e: &MappingError) ->
     }
 }
 
-/// One rules file: lint always, then explain or test. True if it has errors.
-fn one_file(o: &Options, runner: &Runner, path: &str, yaml: &str) -> Result<bool, Failure> {
-    let file: Option<RulesFile> = quality_rules::parse(yaml).ok();
-    let dataset = file
-        .as_ref()
-        .map(|f| f.dataset.value.clone())
-        .unwrap_or_default();
-    if file.is_some() && !runner.has(&dataset) {
-        let message = text_in(o.language, "quality.cli.noData", &[("dataset", dataset)]);
-        return Err(message.into());
-    }
-    let schema = if file.is_some() {
-        runner.schema(&dataset, &o.emails)?
-    } else {
-        Default::default()
-    };
-    let report = lint(yaml, &schema);
-    let mut findings = report.findings.clone();
-    findings.extend(examples(o, runner, &report)?);
-    for f in &findings {
-        println!("{}", finding(o.language, path, f));
-    }
-    let blocking = findings.iter().any(|f| f.severity() == Severity::Error);
-    let Some(file) = file.filter(|_| !blocking) else {
-        return Ok(blocking);
-    };
-    match o.command.as_str() {
-        "explain" => {
-            let tables = runner.tables(&file);
-            for rule in &report.compiled {
-                println!(
-                    "{}\n{}\n",
-                    rule.id,
-                    explain::explain(rule, o.language, &tables).text(o.language)
-                );
-            }
+/// The mapping's schema, with the fields `--type` names as emails.
+fn schema(mapping: &Mapping, emails: &[String]) -> Schema {
+    let mut s = mapping.schema();
+    for (name, t) in &mut s.fields {
+        if emails.contains(name) && *t == FieldType::Text {
+            *t = FieldType::Email;
         }
-        "test" => {
-            let cut = o
-                .cut
-                .as_deref()
-                .ok_or_else(|| text_in(o.language, "quality.cli.noCut", &[]))?;
-            let counts = runner.test(&dataset, &report.compiled, &runner.tables(&file), cut)?;
-            print_counts(o.language, &counts);
-        }
-        _ => {}
     }
-    Ok(false)
+    s
 }
 
-/// The rules' examples, run when there is a cut to run them against.
-fn examples(o: &Options, runner: &Runner, report: &Report) -> Result<Vec<Finding>, Failure> {
-    let needs_cut = report.examples.iter().any(|q| q.cut_params > 0);
-    match (&o.cut, needs_cut) {
-        (Some(cut), _) => Ok(runner.examples(&report.examples, cut)?),
-        (None, false) => Ok(runner.examples(&report.examples, "1970-01-01")?),
-        (None, true) => {
-            eprintln!(
-                "{}",
-                text_in(o.language, "quality.cli.examplesNeedCut", &[])
+/// The tables the file's references read: those of a dataset whose mapping
+/// was given, by its name.
+fn tables(file: &RulesFile, mappings: &BTreeMap<String, Mapping>) -> Tables {
+    file.references
+        .iter()
+        .filter(|(_, r)| mappings.contains_key(&r.dataset.value))
+        .filter_map(|(name, r)| {
+            let filter = match &r.filter {
+                Some(w) => Some(parse_expr(&w.value).ok()?),
+                None => None,
+            };
+            let path = vec![r.dataset.value.clone()];
+            Some((
+                name.clone(),
+                Table {
+                    path,
+                    filter,
+                    pinned: None,
+                },
+            ))
+        })
+        .collect()
+}
+
+/// One rules file: lint always, then explain. Whether it has errors, and
+/// whether it has examples (run on Trino, not here).
+fn one_file(
+    o: &Options,
+    mappings: &BTreeMap<String, Mapping>,
+    path: &str,
+    yaml: &str,
+) -> Result<(bool, bool), Failure> {
+    let file: Option<RulesFile> = quality_rules::parse(yaml).ok();
+    let schema = match &file {
+        Some(f) => {
+            let dataset = f.dataset.value.clone();
+            let mapping = mappings.get(&dataset).ok_or_else(|| {
+                text_in(o.language, "quality.cli.noMapping", &[("dataset", dataset)])
+            })?;
+            schema(mapping, &o.emails)
+        }
+        None => Schema::default(),
+    };
+    let report = lint(yaml, &schema);
+    for f in &report.findings {
+        println!("{}", finding(o.language, path, f));
+    }
+    let blocking = report
+        .findings
+        .iter()
+        .any(|f| f.severity() == Severity::Error);
+    let examples = !report.examples.is_empty();
+    let Some(file) = file.filter(|_| !blocking) else {
+        return Ok((blocking, examples));
+    };
+    if o.command == "explain" {
+        let tables = tables(&file, mappings);
+        for rule in &report.compiled {
+            println!(
+                "{}\n{}\n",
+                rule.id,
+                explain::explain(rule, o.language, &tables).text(o.language)
             );
-            Ok(Vec::new())
         }
     }
+    Ok((false, examples))
 }
 
 /// `file:line:column: QR003 error: <message>`, the message in `language`.
@@ -243,28 +236,6 @@ fn finding(language: Language, path: &str, f: &Finding) -> String {
     format!("{path}{place}: {} {severity}: {message}", f.code.id())
 }
 
-fn print_counts(language: Language, counts: &[Counts]) {
-    let h = |k: &str| text_in(language, &format!("quality.cli.column.{k}"), &[]);
-    println!(
-        "{:<24} {:>10} {:>10} {:>10} {:>10} {:>12}",
-        h("rule"),
-        h("applies"),
-        h("fails"),
-        h("passes"),
-        h("skipped"),
-        h("conformity")
-    );
-    for c in counts {
-        let conformity = c
-            .conformity()
-            .map_or("-".to_string(), |p| format!("{p:.2} %"));
-        println!(
-            "{:<24} {:>10} {:>10} {:>10} {:>10} {:>12}",
-            c.rule, c.applies, c.fails, c.passes, c.skipped, conformity
-        );
-    }
-}
-
 fn options(args: Vec<String>) -> Result<Options, Failure> {
     let usage = || -> Failure { text_in(Language::Es, "quality.cli.usage", &[]).into() };
     let mut it = args.into_iter();
@@ -273,26 +244,19 @@ fn options(args: Vec<String>) -> Result<Options, Failure> {
     }
     let command = it
         .next()
-        .filter(|c| ["lint", "explain", "test", "tidy"].contains(&c.as_str()))
+        .filter(|c| ["lint", "explain", "tidy"].contains(&c.as_str()))
         .ok_or_else(usage)?;
     let mut o = Options {
         command,
         files: Vec::new(),
-        data: Vec::new(),
         mappings: Vec::new(),
         emails: Vec::new(),
-        cut: None,
         check: false,
         language: Language::Es,
     };
     while let Some(arg) = it.next() {
         let mut value = || it.next().ok_or_else(usage);
         match arg.as_str() {
-            "--data" => {
-                let v = value()?;
-                let (dataset, path) = v.split_once('=').ok_or_else(usage)?;
-                o.data.push((dataset.to_string(), path.to_string()));
-            }
             "--type" => {
                 let v = value()?;
                 match v.split_once('=') {
@@ -300,7 +264,6 @@ fn options(args: Vec<String>) -> Result<Options, Failure> {
                     _ => return Err(usage()),
                 }
             }
-            "--cut" => o.cut = Some(value()?),
             "--mapping" => o.mappings.push(value()?),
             "--check" if o.command == "tidy" => o.check = true,
             "--lang" => o.language = Language::parse(&value()?).ok_or_else(usage)?,
