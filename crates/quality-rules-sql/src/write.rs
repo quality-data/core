@@ -7,7 +7,7 @@
 
 use quality_rules_tree::{BinaryOp, Expr, Function, IntervalUnit, Literal, Type};
 
-use super::{formats, quote_ident, quote_text, Engine, Error, Sql, Tables};
+use super::{formats, quote_ident, quote_text, Cut, Engine, Error, Sql, Tables};
 
 /// The characters `trim` and `is_empty` remove: the space and U+00A0.
 const BLANKS: &str = "concat(' ', chr(160))";
@@ -15,15 +15,18 @@ const BLANKS: &str = "concat(' ', chr(160))";
 pub(super) struct Writer<'a> {
     engine: Engine,
     tables: &'a Tables,
+    /// Written in as a literal when given; else each `:cut` is a `?`.
+    cut: Option<&'a Cut>,
     out: String,
     cut_params: usize,
 }
 
 impl<'a> Writer<'a> {
-    pub(super) fn new(engine: Engine, tables: &'a Tables) -> Self {
+    pub(super) fn new(engine: Engine, tables: &'a Tables, cut: Option<&'a Cut>) -> Self {
         Self {
             engine,
             tables,
+            cut,
             out: String::new(),
             cut_params: 0,
         }
@@ -62,10 +65,13 @@ impl<'a> Writer<'a> {
         match e {
             Expr::Field(name) => self.push(&quote_ident(name)?),
             Expr::Literal(l) => self.literal(l)?,
-            Expr::Cut => {
-                self.cut_params += 1;
-                self.push("CAST(? AS DATE)");
-            }
+            Expr::Cut => match self.cut {
+                Some(cut) => self.push(&cut.literal()),
+                None => {
+                    self.cut_params += 1;
+                    self.push("CAST(? AS DATE)");
+                }
+            },
             Expr::Not(x) => self.wrap("(NOT ", x, ")")?,
             Expr::Negate(x) => self.wrap("(-", x, ")")?,
             Expr::Binary { op, left, right } => self.binary(*op, left, right)?,
