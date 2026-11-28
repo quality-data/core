@@ -49,6 +49,17 @@ pub trait Catalog: Send + Sync {
     /// Every dataset's mapping now, by dataset; none if there is no catalog
     /// yet.
     async fn mappings(&self) -> Result<Vec<DatasetMapping>, String>;
+
+    /// The dataset's snapshot at `commit` (a run's manifest's, decision
+    /// 0090 step 22's backfill); `None` if it had no mapping then. A
+    /// catalog that keeps no history cannot answer.
+    async fn snapshot_at(
+        &self,
+        _dataset: &str,
+        _commit: &str,
+    ) -> Result<Option<CatalogSnapshot>, String> {
+        Err("this catalog keeps no history".into())
+    }
 }
 
 #[cfg(test)]

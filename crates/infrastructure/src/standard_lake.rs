@@ -168,6 +168,14 @@ impl Lake for StandardLake {
             WriteOnce::AlreadyThere
         })
     }
+
+    async fn read_object(&self, warehouse: &str, key: &str) -> Result<Option<Vec<u8>>, LakeError> {
+        let policy = self.policy(&LakeGrant::read_only(warehouse)).await?;
+        self.objects
+            .get(warehouse, key, &policy)
+            .await
+            .map_err(lake)
+    }
 }
 
 #[cfg(test)]

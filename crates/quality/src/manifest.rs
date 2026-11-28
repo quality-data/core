@@ -149,6 +149,13 @@ pub trait ManifestStore: Send + Sync {
     /// Writes `body` at `key` unless something is there already; `false`
     /// if it was (a repeated report).
     async fn put_once(&self, warehouse: &str, key: &str, body: Vec<u8>) -> Result<bool, String>;
+
+    /// The manifest at `key`, or `None` if there is none: a backfill reads
+    /// a retained cut's back (decision 0090, step 22). A store that cannot
+    /// read refuses.
+    async fn get(&self, _warehouse: &str, _key: &str) -> Result<Option<Vec<u8>>, String> {
+        Err("this manifest store does not read".into())
+    }
 }
 
 /// A job's manifest, written once before what it reports is stored: the
