@@ -14,7 +14,7 @@ use sqlx::PgPool;
 
 /// Every kind of job `quality.jobs` allows (its `jobs_kind_check`): the
 /// fixed list a metric's `kind` label takes its value from.
-pub const KINDS: [&str; 9] = [
+pub const KINDS: [&str; 10] = [
     "map",
     "extract",
     "evaluate",
@@ -24,6 +24,7 @@ pub const KINDS: [&str; 9] = [
     "lake_tables",
     "records",
     "query",
+    "entity_key",
 ];
 
 /// The ready jobs of one kind.

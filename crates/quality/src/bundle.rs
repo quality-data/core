@@ -14,6 +14,9 @@ mod steps;
 pub use steps::{fill, tokens, OnlyIfRows, Placeholder, PlaceholderFrom, PlaceholderType};
 use steps::{is_count_read, one_row_column};
 
+/// The kind whose bundle may carry a typed document (ruling 102).
+pub const ENTITY_KEY: &str = "entity_key";
+
 /// The JWS `typ` of a bundle, so no other token passes for one.
 pub const BUNDLE_TYP: &str = "qd-bundle+jwt";
 
@@ -197,10 +200,16 @@ impl Bundle {
     fn placeholders_declared(&self) -> bool {
         let mut names = std::collections::BTreeSet::new();
         self.placeholders.iter().all(|p| {
-            let source = self.statements.iter().find(|s| s.id == p.from.statement);
-            is_statement_id(&p.name)
-                && names.insert(p.name.as_str())
-                && source.is_some_and(|s| one_row_column(&s.expects, &p.from.column))
+            let from_answer = match (&p.ty, &p.from) {
+                // A typed document: only an entity lookup's (ruling 102).
+                (PlaceholderType::Text, None) => self.kind == ENTITY_KEY,
+                (PlaceholderType::Text, Some(_)) | (_, None) => false,
+                (_, Some(from)) => {
+                    let source = self.statements.iter().find(|s| s.id == from.statement);
+                    source.is_some_and(|s| one_row_column(&s.expects, &from.column))
+                }
+            };
+            is_statement_id(&p.name) && names.insert(p.name.as_str()) && from_answer
         })
     }
 
@@ -212,7 +221,11 @@ impl Bundle {
                 self.placeholders
                     .iter()
                     .find(|p| p.name == *n)
-                    .is_some_and(|p| self.earlier(&p.from.statement, i).is_some())
+                    .is_some_and(|p| match &p.from {
+                        Some(from) => self.earlier(&from.statement, i).is_some(),
+                        // A document goes only into the lookup's values read.
+                        None => s.expects.is_values(),
+                    })
             })
         });
         let guarded = s.only_if_rows.as_ref().is_none_or(|g| {

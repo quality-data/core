@@ -97,6 +97,40 @@ pub fn source_profile(
     })
 }
 
+/// The lookup of one entity (decision 0090, rulings 81 and 102): the
+/// document in `{{document}}` normalized as a document key is (digits
+/// only, no leading zeros) and hashed in Trino with the findings key, then
+/// its ICD and band in the latest current run of each of `datasets` whose
+/// entity is that hash. One row per dataset: no hash, no other entity.
+pub fn entity_lookup(datasets: &[String]) -> Result<Statement, Error> {
+    let gold = "\"lake\".\"quality_gold\"";
+    let names = datasets
+        .iter()
+        .map(|d| quote_text(d))
+        .collect::<Result<Vec<_>, _>>()?;
+    if names.is_empty() {
+        return Err(Error::UnknownField("datasets".into()));
+    }
+    Ok(Statement {
+        sql: format!(
+            "WITH h AS (SELECT \"key\" FROM {key}), \
+             d AS (SELECT lower(to_hex(hmac_sha256(to_utf8(\
+             NULLIF(trim(LEADING '0' FROM regexp_replace({{{{document}}}}, '[^0-9]', '')), '')), \
+             h.\"key\"))) AS k FROM h), \
+             l AS (SELECT dataset, max(cut) AS cut FROM {gold}.\"current_run\" \
+             WHERE dataset IN ({names}) GROUP BY dataset) \
+             SELECT e.dataset, CAST(e.cut AS varchar) AS cut, e.icd, e.band \
+             FROM {gold}.\"entity_icd\" e \
+             JOIN {gold}.\"current_run\" r \
+             ON e.dataset = r.dataset AND e.cut = r.cut AND e.run_id = r.run_id \
+             JOIN l ON l.dataset = e.dataset AND l.cut = e.cut \
+             JOIN d ON e.entity = d.k",
+            key = crate::FINDINGS_KEY,
+            names = names.join(", "),
+        ),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,5 +180,17 @@ mod tests {
             .unwrap()
             .sql
             .contains("'^(?:a''b)$'"));
+    }
+
+    #[test]
+    fn a_lookup_hashes_the_document_in_the_engine_and_reads_its_datasets_only() {
+        let s = entity_lookup(&["loans".into(), "cards".into()]).unwrap();
+        assert!(s.sql.contains("regexp_replace({{document}}, '[^0-9]', '')"));
+        assert!(s
+            .sql
+            .contains("FROM \"lake\".\"quality_secrets\".\"findings_key\""));
+        assert!(s.sql.contains("WHERE dataset IN ('loans', 'cards')"));
+        assert!(s.sql.ends_with("JOIN d ON e.entity = d.k"));
+        assert!(entity_lookup(&[]).is_err());
     }
 }

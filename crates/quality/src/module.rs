@@ -19,6 +19,7 @@ use crate::draft_api::{self, DraftCatalog};
 use crate::draft_history;
 use crate::drain::QualityDrain;
 use crate::edit_api;
+use crate::entity_lookup_api;
 use crate::field_api;
 use crate::lake_tables;
 use crate::map_api;
@@ -200,6 +201,7 @@ impl Module for QualityModule {
             migration!("0033_job_bundles_source"),
             migration!("0034_schedule_fires"),
             migration!("0035_chain_starts"),
+            migration!("0036_entity_lookups"),
         ]
     }
 
@@ -308,6 +310,7 @@ impl Module for QualityModule {
                 .merge(tables_api::routes(s.pool.clone()))
                 .merge(records_api::routes(s.pool.clone(), s.catalog.clone()))
                 .merge(console_api::routes(s.pool.clone()))
+                .merge(entity_lookup_api::routes(s.pool.clone(), s.sealer.clone()))
                 .merge(lake_tables::routes(s.pool.clone())),
             None => Router::new(),
         })

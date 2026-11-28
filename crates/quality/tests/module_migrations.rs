@@ -57,7 +57,8 @@ async fn the_queue_table_is_created_once_with_forced_row_security() {
             "quality::0032_job_reports",
             "quality::0033_job_bundles_source",
             "quality::0034_schedule_fires",
-            "quality::0035_chain_starts"
+            "quality::0035_chain_starts",
+            "quality::0036_entity_lookups"
         ]
     );
     assert_eq!(migrate(&registry, &db.pool).await, Vec::<String>::new());
@@ -186,7 +187,8 @@ async fn two_processes_migrating_together_apply_each_migration_once() {
             "quality::0032_job_reports",
             "quality::0033_job_bundles_source",
             "quality::0034_schedule_fires",
-            "quality::0035_chain_starts"
+            "quality::0035_chain_starts",
+            "quality::0036_entity_lookups"
         ]
     );
 }

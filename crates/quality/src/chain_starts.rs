@@ -15,7 +15,14 @@ use uuid::Uuid;
 use crate::schedules_api::Step;
 
 /// The kinds a person asks for that run on Trino as a chain of their own.
-pub const ON_DEMAND: &[&str] = &["records", "map", "tables", "test_rule", "query"];
+pub const ON_DEMAND: &[&str] = &[
+    "records",
+    "map",
+    "tables",
+    "test_rule",
+    "query",
+    "entity_key",
+];
 
 /// The most jobs handed over in one round.
 const ROUND: i64 = 50;

@@ -83,6 +83,7 @@ pub(crate) fn serving(
             drafts: drafts.clone(),
             proposal_alerts: Some(proposal_alerts(Language::Es)),
             catalog: catalog.clone(),
+            sealer: Some(Arc::new(BoxSealer(secret_box.clone()))),
         })
     });
     let run_sources = provider.clone().zip(catalog.clone()).map(|(p, catalog)| {

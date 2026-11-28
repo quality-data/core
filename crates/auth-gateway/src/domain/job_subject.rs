@@ -27,6 +27,8 @@ pub enum JobUserKind {
     /// One console statement; the target names its run (decision 0090,
     /// ruling 84).
     Console,
+    /// One entity lookup; the target names its run (ruling 102).
+    Lookup,
 }
 
 impl JobUserKind {
@@ -40,6 +42,7 @@ impl JobUserKind {
             Self::Source => "source",
             Self::Catalog => "catalog",
             Self::Console => "console",
+            Self::Lookup => "lookup",
         }
     }
 
@@ -53,6 +56,7 @@ impl JobUserKind {
             Self::Source,
             Self::Catalog,
             Self::Console,
+            Self::Lookup,
         ]
         .into_iter()
         .find(|k| k.as_str() == s)

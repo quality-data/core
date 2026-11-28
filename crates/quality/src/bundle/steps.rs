@@ -16,7 +16,8 @@ pub struct OnlyIfRows {
     pub after: String,
 }
 
-/// The types a placeholder may carry: decimal integers only, never text.
+/// The types a placeholder may carry: decimal integers, and text only for
+/// an entity lookup's typed document (decision 0090, rulings 81 and 102).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlaceholderType {
@@ -24,6 +25,10 @@ pub enum PlaceholderType {
     SnapshotId,
     /// A `bigint`: `-?[0-9]{1,19}`.
     Bigint,
+    /// A person's typed document, from the run's document route, written
+    /// as a quoted literal: 1 to 64 characters, no control character.
+    /// Allowed only in an `entity_key` bundle, never filled from an answer.
+    Text,
 }
 
 /// Where a placeholder's value comes from: a column of the one-row answer
@@ -43,7 +48,9 @@ pub struct Placeholder {
     pub name: String,
     #[serde(rename = "type")]
     pub ty: PlaceholderType,
-    pub from: PlaceholderFrom,
+    /// None for a [`PlaceholderType::Text`], which no answer fills.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<PlaceholderFrom>,
 }
 
 impl PlaceholderType {
@@ -52,6 +59,10 @@ impl PlaceholderType {
         let digits = match self {
             Self::SnapshotId => value,
             Self::Bigint => value.strip_prefix('-').unwrap_or(value),
+            Self::Text => {
+                return (1..=64).contains(&value.chars().count())
+                    && !value.chars().any(char::is_control);
+            }
         };
         (1..=19).contains(&digits.len())
             && digits.bytes().all(|b| b.is_ascii_digit())
@@ -88,7 +99,11 @@ pub fn fill(sql: &str, values: &[(&Placeholder, &str)]) -> Option<String> {
         if !p.ty.takes(v) {
             return None;
         }
-        out = out.replacen(&format!("{{{{{name}}}}}"), v, 1);
+        let written = match p.ty {
+            PlaceholderType::Text => format!("'{}'", v.replace('\'', "''")),
+            _ => (*v).to_owned(),
+        };
+        out = out.replacen(&format!("{{{{{name}}}}}"), &written, 1);
     }
     Some(out)
 }
@@ -141,10 +156,10 @@ mod tests {
         Placeholder {
             name: "silver_snapshot".into(),
             ty: PlaceholderType::SnapshotId,
-            from: PlaceholderFrom {
+            from: Some(PlaceholderFrom {
                 statement: "pin".into(),
                 column: "snapshot".into(),
-            },
+            }),
         }
     }
 
@@ -220,7 +235,7 @@ mod tests {
         );
         assert!(!late.well_formed(), "filled from a later answer");
         let mut wrong_column = snapshot();
-        wrong_column.from.column = "other".into();
+        wrong_column.from.as_mut().unwrap().column = "other".into();
         let b = bundle(
             vec![wrong_column],
             vec![read("pin", "snapshot"), delete("drop", PINNED, None)],
@@ -248,5 +263,22 @@ mod tests {
         assert!(!PlaceholderType::Bigint.takes("9223372036854775808"));
         assert!(!PlaceholderType::Bigint.takes("-"));
         assert_eq!(fill(PINNED, &[]), None, "a token without its value");
+    }
+
+    #[test]
+    fn a_text_is_written_as_one_quoted_literal() {
+        let p = Placeholder {
+            name: "document".into(),
+            ty: PlaceholderType::Text,
+            from: None,
+        };
+        let sql = "SELECT to_utf8({{document}})";
+        assert_eq!(
+            fill(sql, &[(&p, "10 2'3")]).as_deref(),
+            Some("SELECT to_utf8('10 2''3')")
+        );
+        for v in ["", "a\nb", &"9".repeat(65)] {
+            assert_eq!(fill(sql, &[(&p, v)]), None, "{v:?}");
+        }
     }
 }

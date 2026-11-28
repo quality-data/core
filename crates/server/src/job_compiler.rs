@@ -138,6 +138,12 @@ impl JobCompiler for TrinoJobs {
             "records" => self.records(j, job).await,
             "map" => self.map(j, job).await,
             "test_rule" => self.test_rule(j).await,
+            "entity_key" => {
+                let datasets = quality::entity_lookup_api::datasets_of(&self.pool, j.run)
+                    .await
+                    .map_err(facts)?;
+                quality_jobs::entity_key(&j, &datasets).map_err(refused)
+            }
             "query" => {
                 let c = quality::console_run::job_of(&self.pool, j.run)
                     .await

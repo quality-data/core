@@ -129,6 +129,16 @@ async fn fixture_with(
     drafts: Option<Arc<dyn Drafts>>,
     catalog: Option<Arc<dyn quality::catalog::Catalog>>,
 ) -> (testkit::TestDb, sqlx::PgPool, Router) {
+    fixture_sealed(b, drafts, catalog, None).await
+}
+
+/// As [`fixture_with`], a lookup's document sealed by `sealer`.
+async fn fixture_sealed(
+    b: &Bundle,
+    drafts: Option<Arc<dyn Drafts>>,
+    catalog: Option<Arc<dyn quality::catalog::Catalog>>,
+    sealer: Option<Arc<dyn quality::source_store::Sealer>>,
+) -> (testkit::TestDb, sqlx::PgPool, Router) {
     let db = testkit::spawn_test_db().await;
     sqlx::query("CREATE ROLE qd_queue LOGIN PASSWORD 'queue'")
         .execute(&db.pool)
@@ -173,6 +183,7 @@ async fn fixture_with(
                 proposal_alerts: drafts.as_ref().map(|_| alerts()),
                 drafts,
                 catalog,
+                sealer,
             },
         )
         .router();
@@ -844,5 +855,90 @@ async fn an_asked_job_starts_its_chain_once() {
         kinds,
         ["query", "records"],
         "an evaluate is the operator's own"
+    );
+}
+
+/// A stand-in for the sources' key: reversible, never the clear text.
+struct Reversed;
+impl quality::source_store::Sealer for Reversed {
+    fn seal(&self, plain: &str) -> Result<String, String> {
+        Ok(plain.chars().rev().collect())
+    }
+    fn open(&self, sealed: &str) -> Result<String, String> {
+        Ok(sealed.chars().rev().collect())
+    }
+}
+
+/// Ruling 102: a lookup's document is read once by its job runner, and its
+/// rows become the asker's result, with no hash.
+#[tokio::test]
+async fn a_lookups_document_is_read_once_and_its_rows_kept() {
+    let mut b = bundle("entity_key");
+    b.statements = vec![statement(
+        "entity",
+        Expect::Values {
+            columns: vec![
+                ("dataset".into(), "varchar".into()),
+                ("cut".into(), "varchar".into()),
+                ("icd".into(), "double".into()),
+                ("band".into(), "varchar".into()),
+            ],
+            max_rows: 2,
+        },
+        RunAs::Job,
+    )];
+    let (db, app, router) = fixture_sealed(&b, None, None, Some(Arc::new(Reversed))).await;
+    for sql in [
+        "ALTER TABLE quality.jobs OWNER TO app",
+        "ALTER TABLE quality.lookup_documents OWNER TO app",
+        "ALTER TABLE quality.entity_lookups OWNER TO app",
+    ] {
+        sqlx::query(sql).execute(&db.pool).await.unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO quality.jobs (id, kind, parameters) VALUES ($1::uuid, 'entity_key', '{\"datasets\": [\"loans\"]}')",
+    )
+    .bind(RUN)
+    .execute(&app)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO quality.lookup_documents (job, sealed) VALUES ($1::uuid, '987654321')",
+    )
+    .bind(RUN)
+    .execute(&app)
+    .await
+    .unwrap();
+    assert_eq!(
+        quality::entity_lookup_api::datasets_of(&app, RUN)
+            .await
+            .unwrap(),
+        ["loans"]
+    );
+    let runner = Some("token-runner");
+    let empty = json!({});
+    assert_eq!(
+        post(&router, "document", runner, &empty).await,
+        (StatusCode::OK, json!({ "document": "123456789" }))
+    );
+    assert_eq!(
+        post(&router, "document", runner, &empty).await.0,
+        StatusCode::GONE,
+        "read once"
+    );
+    let rows = json!({ "statement": "entity", "rows": [["loans", "2026-10-31", 0.75, "B"]] });
+    assert_eq!(
+        post(&router, "rows", runner, &rows).await.0,
+        StatusCode::NO_CONTENT
+    );
+    let kept: Value =
+        sqlx::query_scalar("SELECT result FROM quality.entity_lookups WHERE job = $1::uuid")
+            .bind(RUN)
+            .fetch_one(&app)
+            .await
+            .unwrap();
+    assert_eq!(
+        kept,
+        json!([{ "dataset": "loans", "cut": "2026-10-31", "icd": 0.75, "band": "B" }])
     );
 }

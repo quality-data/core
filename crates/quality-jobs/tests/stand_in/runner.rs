@@ -87,10 +87,14 @@ pub(crate) async fn run_bundle(
         }
         let mut values: Vec<(&quality::bundle::Placeholder, String)> = Vec::new();
         for p in &b.placeholders {
-            let Some(rows) = answers.get(&p.from.statement) else {
+            // A typed document is no answer's; tier B runs no lookup.
+            let Some(from) = &p.from else {
                 continue;
             };
-            let at = column(b, &p.from.statement, &p.from.column);
+            let Some(rows) = answers.get(&from.statement) else {
+                continue;
+            };
+            let at = column(b, &from.statement, &from.column);
             if let Some(v) = rows.first().and_then(|r| r.get(at)) {
                 values.push((p, v.to_string().trim_matches('"').to_string()));
             }

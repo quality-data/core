@@ -39,6 +39,9 @@ pub enum TrinoUser {
     /// Reads the bronze, silver and gold of the datasets its asker may
     /// view, for one run only: a console statement (ruling 84).
     Console,
+    /// Reads the findings key and gold's entities and current runs, for
+    /// one run only: an entity's lookup (ruling 102).
+    Lookup,
     /// Reads one source's catalog: its listing (a `tables` job), a page of
     /// a table's records (`records`) or a table's profile (`map`).
     Source,
@@ -53,6 +56,7 @@ impl TrinoUser {
             Self::Extract => "extract",
             Self::Sample => "sample",
             Self::Console => "console",
+            Self::Lookup => "lookup",
             Self::Source => "source",
         }
     }
@@ -68,6 +72,7 @@ fn users_of(kind: &str) -> &'static [TrinoUser] {
         "prepare" => &[TrinoUser::Maint],
         "test_rule" => &[TrinoUser::Sample, TrinoUser::Report],
         "query" => &[TrinoUser::Console],
+        "entity_key" => &[TrinoUser::Lookup],
         "extract" => &[TrinoUser::Extract, TrinoUser::Report],
         "tables" | "records" | "map" => &[TrinoUser::Source],
         _ => &[],
@@ -174,7 +179,7 @@ async fn token_of(
     // A source's user is over its source; every other over the dataset.
     let target = match ask.user {
         TrinoUser::Source => source,
-        TrinoUser::Console => Some(crate::console_run::console_target(job)),
+        TrinoUser::Console | TrinoUser::Lookup => Some(crate::console_run::console_target(job)),
         _ => dataset,
     };
     let dataset = target

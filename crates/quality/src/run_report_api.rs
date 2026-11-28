@@ -83,6 +83,9 @@ pub struct RunReportServices {
     /// The catalog's `main`, whose mappings a schedule's fire fingerprints
     /// (ruling 92(c)).
     pub catalog: Option<Arc<dyn crate::catalog::Catalog>>,
+    /// The sources' key, which seals a lookup's document until its job
+    /// runner reads it (ruling 102).
+    pub sealer: Option<Arc<dyn crate::source_store::Sealer>>,
 }
 
 impl std::fmt::Debug for RunReportServices {
@@ -108,7 +111,8 @@ pub fn routes(pool: PgPool, services: RunReportServices) -> Router {
             services: services.clone(),
         })
         .merge(crate::run_rows_api::routes(pool.clone(), services.clone()))
-        .merge(crate::schedules_api::routes(pool, services))
+        .merge(crate::schedules_api::routes(pool.clone(), services.clone()))
+        .merge(crate::entity_lookup_api::internal_routes(pool, services))
 }
 
 type Refusal = (StatusCode, Json<Value>);

@@ -62,6 +62,7 @@ impl TrinoTokens for ProviderTrinoTokens {
             TrinoUser::Sample => JobUserKind::Sample,
             TrinoUser::Source => JobUserKind::Source,
             TrinoUser::Console => JobUserKind::Console,
+            TrinoUser::Lookup => JobUserKind::Lookup,
         };
         let subject = JobSubject::new(&job.to_string(), kind, dataset)
             .map_err(|_| "not a job's Trino user".to_string())?;

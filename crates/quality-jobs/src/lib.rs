@@ -4,6 +4,7 @@
 //! the catalog, the sequence) and signs what this returns.
 
 mod console;
+mod entity_key;
 mod evaluate;
 mod extract;
 mod gold;
@@ -16,6 +17,7 @@ mod tables;
 mod test_rule;
 
 pub use console::console;
+pub use entity_key::{entity_key, DOCUMENT, ENTITY_READ};
 pub use evaluate::{
     evaluate, AtSnapshots, EvaluateInput, ReferencePin, INDEX_RULES, INDEX_SUMMARY,
 };

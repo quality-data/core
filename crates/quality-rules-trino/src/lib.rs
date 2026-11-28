@@ -62,7 +62,7 @@ pub use retract::{
 pub use rules::{rule_counts, rule_results};
 pub use samples::{rule_samples, sample_column, sample_rows, shown_fields, SAMPLE_HEAD};
 pub use scratch::{cells, entities, groups, means, scratch_delete, scratch_rows};
-pub use values::{profile_column, source_page, source_profile, PROFILE_PER_COLUMN};
+pub use values::{entity_lookup, profile_column, source_page, source_profile, PROFILE_PER_COLUMN};
 
 use quality_rules_sql::quote_ident;
 

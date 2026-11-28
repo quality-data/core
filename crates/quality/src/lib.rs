@@ -24,6 +24,7 @@ pub mod drain;
 pub mod edit_api;
 pub mod engine_compare;
 pub mod entity_key;
+pub mod entity_lookup_api;
 pub mod field_api;
 pub mod firing;
 pub mod index_rows;

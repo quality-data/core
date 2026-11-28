@@ -123,10 +123,20 @@ impl Steps {
         self.placeholders.push(Placeholder {
             name: name.into(),
             ty,
-            from: PlaceholderFrom {
+            from: Some(PlaceholderFrom {
                 statement: statement.into(),
                 column: column.into(),
-            },
+            }),
+        });
+    }
+
+    /// A `{{name}}` token no answer fills: a person's typed document
+    /// (ruling 102), from the run's document route.
+    pub(crate) fn text_placeholder(&mut self, name: &str, ty: PlaceholderType) {
+        self.placeholders.push(Placeholder {
+            name: name.into(),
+            ty,
+            from: None,
         });
     }
 
