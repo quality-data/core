@@ -38,7 +38,8 @@ pub const RUN_SUMMARY: GoldTable = GoldTable {
 };
 
 /// The detail tables, as the PostgreSQL index stores them (decision 0089,
-/// point 2.1), plus `findings` and `finding_groups` (decision 0059).
+/// point 2.1), plus `findings` and `finding_groups` (decision 0059) and
+/// `entity_icd`.
 pub const DETAILS: &[GoldTable] = &[
     GoldTable {
         name: "rule_results",
@@ -60,6 +61,7 @@ pub const DETAILS: &[GoldTable] = &[
             ("distinct_values", BIGINT),
             ("pattern", TEXT),
             ("pattern_count", BIGINT),
+            ("floating", "BOOLEAN"),
             ("mean_icd", DOUBLE),
             ("recency", "ARRAY(BIGINT)"),
         ],
@@ -125,6 +127,13 @@ pub const DETAILS: &[GoldTable] = &[
         name: "finding_groups",
         columns: &[("record", TEXT), ("dimension", TEXT), ("grp", TEXT)],
     },
+    // One row per entity (ruled by the user 2026-11-25, closing decision
+    // 0089's Open 2): its keyed hash, never its key, so the bands of two
+    // cuts can be matched (`band_transitions`).
+    GoldTable {
+        name: "entity_icd",
+        columns: &[("entity", TEXT), ("icd", DOUBLE), ("band", TEXT)],
+    },
 ];
 
 /// `remediation_slas`: a dataset's SLAs by queue, no cut (ruled by the
@@ -157,11 +166,12 @@ fn create(t: &GoldTable, partitioning: &str) -> String {
 }
 
 fn plain(sql: String) -> Statement {
-    Statement { sql, cut_params: 0 }
+    Statement { sql }
 }
 
 /// The install's statements, in order: the schemas, gold's tables, the
-/// views people read, the scratch table and the findings key's table.
+/// views people read, the jobs' counts (ruling 53), the scratch table and
+/// the findings key's table.
 /// Each can run twice. The views join with `ON`, never `USING` with `t.*`
 /// (T2: `t.*` after `USING` drops the join columns, and a row filter on
 /// `dataset` then fails).
@@ -203,6 +213,7 @@ pub fn install() -> Vec<Statement> {
             n = t.name
         )));
     }
+    out.push(crate::job_counts::create());
     out.push(plain(format!(
         "CREATE TABLE IF NOT EXISTS {} (job_id VARCHAR, dataset VARCHAR, k VARCHAR, \
          r_key VARCHAR, s VARCHAR, a DOUBLE, serious BOOLEAN, act BOOLEAN, icd DOUBLE, \
@@ -240,6 +251,13 @@ mod tests {
              (dataset VARCHAR, cut DATE, run_id VARCHAR, \"rule\" VARCHAR"
         ));
         assert!(rules.ends_with("ARRAY['dataset', 'cut', 'run_id'])"));
+        let entities = sql.iter().find(|s| s.contains("\"entity_icd\" (")).unwrap();
+        assert!(entities.contains("\"entity\" VARCHAR, \"icd\" DOUBLE, \"band\" VARCHAR"));
+        assert!(entities.ends_with("ARRAY['dataset', 'cut', 'run_id'])"));
+        assert!(sql.iter().any(|s| s.contains("v_entity_icd")));
+        assert!(sql
+            .iter()
+            .any(|s| s.contains("\"job_counts\" (dataset VARCHAR, run VARCHAR")));
         let views: Vec<&&str> = sql.iter().filter(|s| s.contains("VIEW")).collect();
         assert_eq!(views.len(), 2 + DETAILS.len());
         for v in views {
