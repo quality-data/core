@@ -89,6 +89,47 @@ pub async fn register_client(pool: &PgPool, args: &[String]) -> Result<Vec<Strin
     Ok(lines)
 }
 
+/// The installation's own machine client `id` for `audience`, registered
+/// if it is not (decision 0090, ruling 60): the API signs its tokens itself
+/// (`own_client`), so its secret is made and dropped here, never shown.
+/// An existing client is left as it is, so a person may change or delete
+/// it. True if it was registered now.
+pub async fn ensure_own_client(
+    pool: &PgPool,
+    id: &str,
+    name: &str,
+    audience: &str,
+) -> Result<bool, String> {
+    let id = ClientId::parse(id).map_err(|e| e.to_string())?;
+    let clients = PgOidcClients::new(pool.clone());
+    if clients
+        .find(&id)
+        .await
+        .map_err(|e| e.to_string())?
+        .is_some()
+    {
+        return Ok(false);
+    }
+    let hash = ResetTokenAdapter.hash(&ResetTokenAdapter.generate());
+    let auth = ClientAuth::Secret { hash };
+    let settings = ClientSettings {
+        token_alg: SigningAlg::ES256,
+        client_credentials: true,
+        audiences: vec![audience.to_owned()],
+        ..ClientSettings::default()
+    };
+    settings.check(&auth)?;
+    let client = OidcClient {
+        id,
+        name: name.to_owned(),
+        redirect_uris: Vec::new(),
+        auth,
+        settings,
+    };
+    // Two APIs starting at once: the second insert finds the first's row.
+    clients.insert(&client).await.map_err(|e| e.to_string())
+}
+
 /// How a new client authenticates, and its secret if it gets one: by the
 /// certificate of a machine of `--machine-role` (no secret, no redirect
 /// URI, never public), public, or with a new secret.
