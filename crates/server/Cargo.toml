@@ -40,6 +40,9 @@ prometheus-client.workspace = true
 quality.workspace = true
 quality-rules.workspace = true
 quality-rules-duckdb.workspace = true
+# The bundles' compiler for Trino (decision 0090, amendment A1).
+quality-jobs.workspace = true
+quality-rules-trino.workspace = true
 # Tenant ids for the catalog (`quality catalog import --tenant`).
 uuid.workspace = true
 texts.workspace = true
