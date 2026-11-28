@@ -57,6 +57,7 @@ pub(crate) fn serving(
     secret_box: SecretBox,
     dolt: Option<Arc<DoltSnapshots>>,
 ) -> Result<ModuleRegistry, Box<dyn std::error::Error>> {
+    crate::chains_wiring::spawn(pool, provider.clone())?;
     let lake = standard_lake(pool, &secret_box)?;
     let manifests = lake
         .clone()

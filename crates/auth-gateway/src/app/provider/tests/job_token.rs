@@ -120,3 +120,25 @@ async fn a_jobs_trino_token_needs_a_client_allowed_trino() {
     let unknown = server.trino_job_token("nadie", &subject, "w").await;
     assert_eq!(unknown.unwrap_err().code(), "invalid_client");
 }
+
+#[tokio::test]
+async fn the_cores_own_token_is_a_machine_token_of_its_own_client() {
+    let orchestrator = ClientSettings {
+        client_credentials: true,
+        audiences: vec!["orchestrator".into()],
+        ..ClientSettings::default()
+    };
+    let f = fixture_with(secret(), orchestrator);
+    let token = f
+        .server
+        .own_machine_token("gestion", "orchestrator")
+        .await
+        .unwrap();
+    let (client, machine) = f
+        .server
+        .machine_caller(&token.access_token, "orchestrator")
+        .unwrap();
+    assert_eq!((client.as_str(), machine), ("gestion", None));
+    let refused = f.server.own_machine_token("gestion", "trino").await;
+    assert_eq!(refused.unwrap_err().code(), "invalid_target");
+}

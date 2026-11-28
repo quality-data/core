@@ -6,6 +6,7 @@
 pub mod bundle;
 pub mod bundle_api;
 pub mod catalog;
+pub mod chain_starts;
 pub mod chart_api;
 pub mod charts;
 pub mod console;

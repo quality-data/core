@@ -31,6 +31,7 @@ mod audit;
 mod background;
 mod callers;
 mod catalog_wiring;
+mod chains_wiring;
 mod commands;
 mod config;
 mod database;

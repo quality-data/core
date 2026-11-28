@@ -199,6 +199,7 @@ impl Module for QualityModule {
             migration!("0032_job_reports"),
             migration!("0033_job_bundles_source"),
             migration!("0034_schedule_fires"),
+            migration!("0035_chain_starts"),
         ]
     }
 

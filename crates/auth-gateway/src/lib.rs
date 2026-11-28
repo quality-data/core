@@ -21,7 +21,7 @@ pub use self::app::{
 };
 pub use self::app::{
     AuthorizationServer, AuthorizeOutcome, AuthorizeRequest, ClientChange, ModuleClients,
-    ModuleClientsError, ModuleClientsRequest, TokenError, TokenRequest, TokenResponse,
+    ModuleClientsError, ModuleClientsRequest, TokenError, TokenRequest, TokenResponse, CORE_CLIENT,
 };
 pub use self::domain::{
     is_join_token, CertificateSigner, CertificateTerm, JobSubject, JobUserKind, JoinTokenMint,

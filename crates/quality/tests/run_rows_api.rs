@@ -760,3 +760,89 @@ async fn assert_listed(router: &Router, id: uuid::Uuid) {
         json!({ "schedules": [{ "id": id, "cron": "0 2 * * *", "timezone": "UTC", "enabled": true }] })
     );
 }
+
+/// What the orchestrator was asked to start, failing when told to.
+#[derive(Default)]
+struct Started {
+    fail: std::sync::atomic::AtomicBool,
+    asked: std::sync::Mutex<Vec<(uuid::Uuid, String)>>,
+}
+
+#[async_trait::async_trait]
+impl quality::chain_starts::Chains for Started {
+    async fn start(
+        &self,
+        job: uuid::Uuid,
+        steps: &[quality::schedules_api::Step],
+    ) -> Result<String, String> {
+        if self.fail.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("unreachable".into());
+        }
+        self.asked
+            .lock()
+            .unwrap()
+            .push((job, steps[0].kind.clone()));
+        Ok(format!("chain-{job}"))
+    }
+}
+
+/// Rulings 92(a) and 100: each job a person asks for starts one chain,
+/// once; a failed start is tried again.
+#[tokio::test]
+async fn an_asked_job_starts_its_chain_once() {
+    let (db, app, _router) = fixture(&bundle("evaluate")).await;
+    for sql in [
+        "ALTER TABLE quality.jobs OWNER TO app",
+        "ALTER TABLE quality.chain_starts OWNER TO app",
+    ] {
+        sqlx::query(sql).execute(&db.pool).await.unwrap();
+    }
+    for (kind, dataset) in [
+        ("records", None),
+        ("evaluate", Some("loans")),
+        ("query", None),
+    ] {
+        sqlx::query("INSERT INTO quality.jobs (kind, dataset, parameters) VALUES ($1, $2, '{}')")
+            .bind(kind)
+            .bind(dataset)
+            .execute(&app)
+            .await
+            .unwrap();
+    }
+    let chains = Started::default();
+    chains.fail.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(
+        quality::chain_starts::hand_over(&app, &chains)
+            .await
+            .unwrap(),
+        0
+    );
+    chains
+        .fail
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(
+        quality::chain_starts::hand_over(&app, &chains)
+            .await
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        quality::chain_starts::hand_over(&app, &chains)
+            .await
+            .unwrap(),
+        0
+    );
+    let mut kinds: Vec<String> = chains
+        .asked
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(_, k)| k.clone())
+        .collect();
+    kinds.sort();
+    assert_eq!(
+        kinds,
+        ["query", "records"],
+        "an evaluate is the operator's own"
+    );
+}
