@@ -184,6 +184,7 @@ async fn fixture_sealed(
                 drafts,
                 catalog,
                 sealer,
+                log: Some(Arc::new(Issued::default())),
             },
         )
         .router();
@@ -941,4 +942,24 @@ async fn a_lookups_document_is_read_once_and_its_rows_kept() {
         kept,
         json!([{ "dataset": "loans", "cut": "2026-10-31", "icd": 0.75, "band": "B" }])
     );
+}
+
+/// What was recorded as given to a job runner.
+#[derive(Default)]
+struct Issued(std::sync::Mutex<Vec<(String, String)>>);
+
+#[async_trait::async_trait]
+impl quality::job_sources::IssueLog for Issued {
+    async fn issued(
+        &self,
+        _job: uuid::Uuid,
+        kind: &str,
+        machine: &str,
+        _ip: &str,
+        resource: &str,
+    ) -> Result<(), String> {
+        let mut kept = self.0.lock().unwrap();
+        kept.push((format!("{kind} {machine}"), resource.to_owned()));
+        Ok(())
+    }
 }

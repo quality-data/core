@@ -180,6 +180,7 @@ async fn fixture() -> (testkit::TestDb, sqlx::PgPool, Router, Bundle) {
                 proposal_alerts: None,
                 catalog: None,
                 sealer: None,
+                log: None,
             },
         )
         .router();

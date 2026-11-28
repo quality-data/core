@@ -197,7 +197,7 @@ async fn document(
     Path(run): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, Refusal> {
-    headers
+    let caller = headers
         .get(AUTHORIZATION)
         .and_then(|h| h.to_str().ok())
         .and_then(|h| h.strip_prefix("Bearer "))
@@ -217,6 +217,17 @@ async fn document(
     if pinned.as_deref() != Some(KIND) {
         return Err(refused(StatusCode::NOT_FOUND, "no_bundle"));
     }
+    // Recorded before it is given, as a source's secrets are (0030).
+    crate::job_sources::record(
+        services.log.as_deref(),
+        job,
+        KIND,
+        &caller.worker_prefix(),
+        &headers,
+        &format!("entity/lookup/{job}/document"),
+    )
+    .await
+    .map_err(|status| refused(status, "not_recorded"))?;
     let sealed: Option<String> =
         sqlx::query_scalar("DELETE FROM quality.lookup_documents WHERE job = $1 RETURNING sealed")
             .bind(job)

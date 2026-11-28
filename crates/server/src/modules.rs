@@ -84,6 +84,9 @@ pub(crate) fn serving(
             proposal_alerts: Some(proposal_alerts(Language::Es)),
             catalog: catalog.clone(),
             sealer: Some(Arc::new(BoxSealer(secret_box.clone()))),
+            log: Some(Arc::new(Issues(Arc::new(PgAuditRepository::new(
+                pool.clone(),
+            ))))),
         })
     });
     let run_sources = provider.clone().zip(catalog.clone()).map(|(p, catalog)| {

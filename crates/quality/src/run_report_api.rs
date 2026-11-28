@@ -86,6 +86,9 @@ pub struct RunReportServices {
     /// The sources' key, which seals a lookup's document until its job
     /// runner reads it (ruling 102).
     pub sealer: Option<Arc<dyn crate::source_store::Sealer>>,
+    /// Where a lookup's document given to a job runner is recorded first,
+    /// as a source's secrets are (ruling 102, decision 0030).
+    pub log: Option<Arc<dyn crate::job_sources::IssueLog>>,
 }
 
 impl std::fmt::Debug for RunReportServices {
