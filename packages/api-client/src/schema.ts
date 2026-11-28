@@ -2965,6 +2965,12 @@ export interface components {
              */
             data_type: string;
             name: string;
+            /**
+             * @description Whether the source lets it be empty, as Trino's listing says
+             *     (decision 0090, ruling 86); none from an older listing. No listing
+             *     names a primary key: the person chooses it when mapping.
+             */
+            nullable?: boolean | null;
         };
         /** @description One table of a source, as a map job names it (`schema.table`). */
         SourceTable: {
