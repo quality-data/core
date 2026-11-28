@@ -886,6 +886,7 @@
     "emptyShare": "Porcentaje vacío",
     "distinct": "Valores distintos",
     "pattern": "Forma más común",
+    "floating": "Número de punto flotante",
     "patternShare": "Su porcentaje de los llenos",
     "igcd": "IGCD",
     "lowest_icd": "Campos con menor ICD",
