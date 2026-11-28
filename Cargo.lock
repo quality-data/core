@@ -3141,6 +3141,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "quality-jobs"
+version = "0.1.0"
+dependencies = [
+ "quality",
+ "quality-rules-trino",
+]
+
+[[package]]
 name = "quality-rules"
 version = "0.1.0"
 dependencies = [
@@ -3172,7 +3180,11 @@ dependencies = [
  "quality-rules-model",
  "quality-rules-sql",
  "quality-rules-tree",
+ "quality-rules-trino",
+ "reqwest",
+ "serde_json",
  "sha2 0.10.9",
+ "tokio",
 ]
 
 [[package]]
@@ -3944,8 +3956,10 @@ dependencies = [
  "platform",
  "prometheus-client",
  "quality",
+ "quality-jobs",
  "quality-rules",
  "quality-rules-duckdb",
+ "quality-rules-trino",
  "serde_json",
  "sqlx",
  "testkit",
