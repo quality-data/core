@@ -107,12 +107,33 @@ pub fn insert_slas(dataset: &str, run_id: &str, slas: &[Sla]) -> Result<Option<S
     ))))
 }
 
-fn older(dataset: &str, run_id: &str) -> Result<String, Error> {
+fn slas_of(dataset: &str, run_id: &str, op: &str) -> Result<String, Error> {
     Ok(format!(
-        "{} AND run_id <> {}",
+        "{} AND run_id {op} {}",
         of_dataset("remediation_slas", dataset)?,
         quote_text(run_id)?
     ))
+}
+
+fn older(dataset: &str, run_id: &str) -> Result<String, Error> {
+    slas_of(dataset, run_id, "<>")
+}
+
+/// What an earlier attempt of run `run_id` wrote, counted before its
+/// delete: a retry keeps its `run_id` (ruled by the user 2026-11-25).
+pub fn run_slas(dataset: &str, run_id: &str) -> Result<Statement, Error> {
+    Ok(plain(format!(
+        "SELECT count(*) FROM {}",
+        slas_of(dataset, run_id, "=")?
+    )))
+}
+
+/// An earlier attempt's SLAs of run `run_id` go, before the insert.
+pub fn delete_run_slas(dataset: &str, run_id: &str) -> Result<Statement, Error> {
+    Ok(plain(format!(
+        "DELETE FROM {}",
+        slas_of(dataset, run_id, "=")?
+    )))
 }
 
 /// The older runs' SLAs of the dataset, counted before their delete.
@@ -178,6 +199,14 @@ mod tests {
         assert!(s.contains("('loans', 'r-1', 'Office', 'O-1', 5, current_timestamp)"));
         assert!(s.contains("CAST(NULL AS VARCHAR), 10,"));
         assert!(!s.contains("cut"));
+        assert!(delete_run_slas("loans", "r-1")
+            .unwrap()
+            .sql
+            .ends_with("AND run_id = 'r-1'"));
+        assert!(run_slas("loans", "r-1")
+            .unwrap()
+            .sql
+            .starts_with("SELECT count(*) FROM"));
         assert!(delete_older_slas("loans", "r-1")
             .unwrap()
             .sql
