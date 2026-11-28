@@ -16,6 +16,7 @@ use infrastructure::lake_policies::SessionPolicies;
 use infrastructure::module_migrations::PgModuleMigrator;
 use infrastructure::standard_lake::StandardLake;
 use infrastructure::{PgAuditRepository, PgLakeAdminKeys, PgPool, SecretBox};
+use quality::bundle_api::{self, BundleServices};
 use quality::catalog::Catalog;
 use quality::draft_api::DraftCatalog;
 use quality::job_map::Drafts;
@@ -24,6 +25,7 @@ use quality::lake::{LakeAccess, LakeIssuer, TableCatalog};
 use quality::manifest::ManifestStore;
 use quality::module::QualityModule;
 use quality::proposal::Patterns;
+use quality::run_token_api::RunTokenServices;
 use quality::source_store::Sealer;
 use quality::worker_api::WorkerServices;
 use texts::Language;
@@ -66,6 +68,20 @@ pub(crate) fn serving(
     let catalog = dolt.clone().map(|d| d as Arc<dyn Catalog>);
     let drafts = dolt.clone().map(|d| d as Arc<dyn Drafts>);
     let review = dolt.map(|d| d as Arc<dyn DraftCatalog>);
+    let bundles = provider
+        .clone()
+        .and_then(|p| bundle_services(p, pool.clone(), catalog.clone(), manifests.clone()));
+    let run_tokens = provider
+        .clone()
+        .and_then(|p| run_token_services(p, pool.clone()));
+    let run_sources = provider.clone().zip(catalog.clone()).map(|(p, catalog)| {
+        quality::run_source_api::RunSourceServices {
+            tokens: Arc::new(BundleTokens(p)),
+            sealer: Arc::new(BoxSealer(secret_box.clone())),
+            catalog,
+            log: Arc::new(Issues(Arc::new(PgAuditRepository::new(pool.clone())))),
+        }
+    });
     let quality = match provider {
         Some(p) => QualityModule::serving(
             pool.clone(),
@@ -89,6 +105,18 @@ pub(crate) fn serving(
     .with_patterns(semantic_patterns()?);
     let quality = match review {
         Some(review) => quality.with_drafts(review),
+        None => quality,
+    };
+    let quality = match bundles {
+        Some(services) => quality.with_bundles(pool.clone(), services),
+        None => quality,
+    };
+    let quality = match run_tokens {
+        Some(services) => quality.with_run_tokens(pool.clone(), services),
+        None => quality,
+    };
+    let quality = match run_sources {
+        Some(services) => quality.with_run_sources(pool.clone(), services),
         None => quality,
     };
     Ok(ModuleRegistry::new().register(quality))
@@ -233,6 +261,13 @@ impl ManifestStore for LakeManifests {
             .map(|w| w == WriteOnce::Written)
             .map_err(|e| e.to_string())
     }
+
+    async fn get(&self, warehouse: &str, key: &str) -> Result<Option<Vec<u8>>, String> {
+        self.0
+            .read_object(warehouse, key)
+            .await
+            .map_err(|e| e.to_string())
+    }
 }
 
 /// A job's lake credentials, within its grant, from the lake's STS.
@@ -266,6 +301,69 @@ impl quality::worker_api::MachineTokens for ProviderTokens {
             .0
             .machine_caller(token, quality::worker_api::AUDIENCE)?;
         Some(quality::worker_api::MachineCaller { client, machine })
+    }
+}
+
+/// The bundle route's services (decision 0090, point 2): bundles signed
+/// with the provider's ES256 key, asked with machine tokens for the job
+/// runners' audience; `None` without that key.
+fn bundle_services(
+    p: AuthorizationServer,
+    pool: PgPool,
+    catalog: Option<Arc<dyn Catalog>>,
+    manifests: Option<Arc<dyn ManifestStore>>,
+) -> Option<BundleServices> {
+    p.sign_es256(quality::bundle::BUNDLE_TYP, "{}")?;
+    Some(BundleServices {
+        tokens: Arc::new(BundleTokens(p.clone())),
+        signer: Arc::new(ProviderBundles(p)),
+        compiler: Arc::new(crate::job_compiler::TrinoJobs {
+            pool,
+            catalog,
+            manifests,
+        }),
+    })
+}
+
+/// The run token route's services (decision 0090, point 7.1): asked with
+/// the job runners' machine tokens, recorded in the audit log, issued with
+/// the provider's ES256 key; `None` without that key.
+fn run_token_services(p: AuthorizationServer, pool: PgPool) -> Option<RunTokenServices> {
+    p.sign_es256("at+jwt", "{}")?;
+    Some(RunTokenServices {
+        tokens: Arc::new(BundleTokens(p.clone())),
+        issuer: Arc::new(crate::trino_tokens::ProviderTrinoTokens::new(
+            p,
+            pool.clone(),
+        )),
+        log: Arc::new(Issues(Arc::new(PgAuditRepository::new(pool)))),
+    })
+}
+
+/// The job runners' tokens for the bundle route, as the provider issued
+/// them.
+struct BundleTokens(AuthorizationServer);
+
+impl quality::worker_api::MachineTokens for BundleTokens {
+    fn client(&self, token: &str) -> Option<quality::worker_api::MachineCaller> {
+        let (client, machine) = self.0.machine_caller(token, bundle_api::AUDIENCE)?;
+        Some(quality::worker_api::MachineCaller { client, machine })
+    }
+}
+
+/// The provider's ES256 key, which signs job bundles.
+struct ProviderBundles(AuthorizationServer);
+
+impl quality::bundle::BundleSigner for ProviderBundles {
+    fn sign(&self, typ: &str, claims: &str) -> String {
+        // `bundle_services` wires it only once the key has signed.
+        self.0
+            .sign_es256(typ, claims)
+            .expect("the provider's ES256 key")
+    }
+
+    fn verify(&self, typ: &str, token: &str) -> Option<String> {
+        self.0.verify_es256(typ, token)
     }
 }
 

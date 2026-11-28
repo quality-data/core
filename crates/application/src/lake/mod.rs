@@ -125,6 +125,9 @@ pub trait Lake: Send + Sync {
         key: &str,
         body: &[u8],
     ) -> Result<WriteOnce, LakeError>;
+    /// The object at `key`, or `None` if there is none (a run's manifest,
+    /// read back for a backfill).
+    async fn read_object(&self, warehouse: &str, key: &str) -> Result<Option<Vec<u8>>, LakeError>;
 }
 
 /// How long a warehouse keeps what is written (0028's retention).

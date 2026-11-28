@@ -321,9 +321,10 @@ async fn a_charts_rows_come_from_the_cut_asked_or_the_latest() {
         out["rows"],
         json!([
             {"field": "Note", "records": 100, "empty": 100, "empty_share": 1.0,
-             "distinct_values": 0, "pattern": null, "pattern_share": null},
+             "distinct_values": 0, "pattern": null, "floating": null, "pattern_share": null},
             {"field": "Amount", "records": 100, "empty": 20, "empty_share": 0.2,
-             "distinct_values": 70, "pattern": "9999.9", "pattern_share": 0.75},
+             "distinct_values": 70, "pattern": "9999.9", "floating": null,
+             "pattern_share": 0.75},
         ])
     );
 
