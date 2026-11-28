@@ -167,7 +167,8 @@ impl Runner {
         ))
     }
 
-    fn column_types(&self, view: &str) -> Result<BTreeMap<String, String>, Error> {
+    /// A loaded view's columns and their DuckDB types.
+    pub fn column_types(&self, view: &str) -> Result<BTreeMap<String, String>, Error> {
         let mut stmt = self.con.prepare(&format!(
             "SELECT column_name, column_type FROM (DESCRIBE {})",
             quoted(view)?
