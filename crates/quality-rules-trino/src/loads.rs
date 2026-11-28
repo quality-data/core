@@ -8,7 +8,7 @@
 
 use quality::layers::{SourceClass, DERIVED_BY, ENTITY_KEY, KEY_NORMALIZED};
 use quality::mapping::{FieldRole, Kind, Mapping};
-use quality_rules_sql::quote_text;
+use quality_rules_sql::{quote_text, Cut};
 
 use crate::icd::{key, with_role};
 use crate::read::{pinned, typed_select, Pinned, TablePath};
@@ -21,12 +21,12 @@ pub const LOAD: &str = "_load";
 /// loads existed (`_load` `NULL`, read as the cut's load until replaced).
 #[derive(Debug, Clone, Copy)]
 pub struct Accepted<'a> {
-    pub cut: &'a str,
+    pub cut: &'a Cut,
     pub load: Option<&'a str>,
 }
 
 fn plain(sql: String) -> Statement {
-    Statement { sql, cut_params: 0 }
+    Statement { sql }
 }
 
 fn table(t: &TablePath) -> Result<String, Error> {
@@ -40,14 +40,18 @@ fn table(t: &TablePath) -> Result<String, Error> {
 
 /// The accepted load of a cut at its recorded snapshot, as a relation.
 pub fn accepted(p: &Pinned, a: &Accepted<'_>) -> Result<String, Error> {
+    accepted_in(&pinned(p)?, a)
+}
+
+/// The accepted load of a cut in `from`, a pinned table (`pinned_by`).
+pub fn accepted_in(from: &str, a: &Accepted<'_>) -> Result<String, Error> {
     let load = match a.load {
         Some(l) => format!("{LOAD} = {}", quote_text(l)?),
         None => format!("{LOAD} IS NULL"),
     };
     Ok(format!(
-        "(SELECT * FROM {} WHERE cut = DATE {} AND {load})",
-        pinned(p)?,
-        quote_text(a.cut)?
+        "(SELECT * FROM {from} WHERE cut = {} AND {load})",
+        a.cut.literal()
     ))
 }
 
@@ -123,7 +127,7 @@ pub fn derive_silver(
         ));
     }
     extra.push(quote_text(digest)?);
-    extra.push(format!("DATE {}", quote_text(bronze.1.cut)?));
+    extra.push(bronze.1.cut.literal());
     extra.push(quote_text(load)?);
     let mut names = Vec::new();
     for (n, _) in silver_columns(mapping) {
@@ -163,24 +167,24 @@ pub fn migrate_to_loads(t: &TablePath) -> Result<Vec<Statement>, Error> {
 
 /// The loads a cut has, from `"t$partitions"`: a superseded one is deleted
 /// only when listed here (RustFS refuses an empty delete).
-pub fn loads_of_cut(t: &TablePath, cut: &str) -> Result<Statement, Error> {
+pub fn loads_of_cut(t: &TablePath, cut: &Cut) -> Result<Statement, Error> {
     let parts = TablePath {
         table: format!("{}$partitions", t.table),
         ..t.clone()
     };
     Ok(plain(format!(
-        "SELECT partition.{LOAD} FROM {} WHERE partition.cut = DATE {}",
+        "SELECT partition.{LOAD} FROM {} WHERE partition.cut = {}",
         table(&parts)?,
-        quote_text(cut)?
+        cut.literal()
     )))
 }
 
 /// A superseded load's rows, by partition only: whole files go.
-pub fn delete_load(t: &TablePath, cut: &str, load: &str) -> Result<Statement, Error> {
+pub fn delete_load(t: &TablePath, cut: &Cut, load: &str) -> Result<Statement, Error> {
     Ok(plain(format!(
-        "DELETE FROM {} WHERE cut = DATE {} AND {LOAD} = {}",
+        "DELETE FROM {} WHERE cut = {} AND {LOAD} = {}",
         table(t)?,
-        quote_text(cut)?,
+        cut.literal(),
         quote_text(load)?
     )))
 }
