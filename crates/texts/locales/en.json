@@ -447,20 +447,11 @@
     },
     "cli": {
       "blocked": "There are errors: fix them before saving the rules.",
-      "noData": "The dataset {{dataset}} is missing: load it with --data {{dataset}}=file.parquet",
-      "noCut": "The cut is missing: --cut YYYY-MM-DD",
-      "examplesNeedCut": "The examples compare dates with the cut: add --cut YYYY-MM-DD to test them.",
+      "noMapping": "The dataset {{dataset}} has no mapping: give it with --mapping FILE",
+      "examplesOnTrino": "The rules' examples are not run here: a rule test runs them on Trino.",
       "error": "error",
       "warning": "warning",
-      "usage": "Usage: server quality rules lint|explain|test FILE... --data DATASET=PARQUET... [--mapping FILE]... [--cut YYYY-MM-DD] [--type FIELD=email] [--lang es|en] · server quality rules tidy FILE... [--check]",
-      "column": {
-        "rule": "Rule",
-        "applies": "Applies",
-        "fails": "Fails",
-        "passes": "Passes",
-        "skipped": "Not applied",
-        "conformity": "Conformity"
-      },
+      "usage": "Usage: server quality rules lint|explain FILE... --mapping FILE... [--type FIELD=email] [--lang es|en] · server quality rules tidy FILE... [--check]",
       "mapping": {
         "parse": "The mapping cannot be read: {{message}}",
         "unknownKey": "The key {{field}} is not among the mapping's fields",

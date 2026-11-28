@@ -172,7 +172,7 @@ impl DoltCatalog {
         reference: &str,
         dataset: &str,
     ) -> Result<Option<CatalogFiles>, sqlx::Error> {
-        let (pool, _entry) = self.pool(database).await?;
+        let (pool, entry) = self.pool(database).await?;
         let mut conn = pool.acquire().await?;
         let commit: Option<String> =
             sqlx::query_scalar("SELECT hash FROM dolt_branches WHERE name = ?")
@@ -182,6 +182,20 @@ impl DoltCatalog {
         let Some(commit) = commit else {
             return Ok(None);
         };
+        drop(conn);
+        drop(entry);
+        self.files_at_commit(database, &commit, dataset).await
+    }
+
+    /// The dataset's mapping and rules at `commit` (a run's manifest's,
+    /// decision 0090 step 22's backfill); `None` if it had no mapping then.
+    pub async fn files_at_commit(
+        &self,
+        database: &str,
+        commit: &str,
+        dataset: &str,
+    ) -> Result<Option<CatalogFiles>, sqlx::Error> {
+        let commit = commit.to_string();
         // `AS OF` the commit: the mapping and the rules of the same version.
         // Dolt takes no parameter there; a hash is letters and digits only.
         if commit.is_empty() || !commit.chars().all(|c| c.is_ascii_alphanumeric()) {
@@ -189,6 +203,8 @@ impl DoltCatalog {
                 "unexpected commit hash {commit:?}"
             )));
         }
+        let (pool, _entry) = self.pool(database).await?;
+        let mut conn = pool.acquire().await?;
         let mapping: Option<String> = match sqlx::query_scalar(&format!(
             "SELECT body FROM mappings AS OF '{commit}' WHERE dataset = ?"
         ))

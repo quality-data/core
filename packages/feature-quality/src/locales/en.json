@@ -886,6 +886,7 @@
     "emptyShare": "Empty share",
     "distinct": "Distinct values",
     "pattern": "Commonest shape",
+    "floating": "Floating-point number",
     "patternShare": "Its share of the filled",
     "igcd": "IGCD",
     "lowest_icd": "Fields with the lowest ICD",
