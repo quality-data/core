@@ -1,16 +1,16 @@
-//! `server quality rules lint | explain | test` (decision 0019): the rule
+//! `server quality rules lint | explain | tidy` (decision 0019): the rule
 //! language on local files, for people and for CI. Any dataset: each rules
 //! file runs against the dataset it names, loaded from a Parquet file with
 //! `--data <dataset>=<file>`, its schema read from that file; its
 //! references read the other datasets loaded. With `--mapping` a dataset
 //! is read through its mapping (decision 0020): `--data` then names the
-//! mapping's source, and the rules name the mapping's fields. `test` prints counts per rule,
-//! never values (the data may be a cooperative's).
+//! mapping's source, and the rules name the mapping's fields. A rule test
+//! runs on Trino as a `rule_test` job against a chosen cut (decision 0090,
+//! ruling 54), not here.
 //!
 //! ```text
 //! server quality rules lint    FILE... --data DATASET=PARQUET... [--mapping FILE]... [--cut DATE] [--type FIELD=email]... [--lang es|en]
 //! server quality rules explain FILE... --data DATASET=PARQUET... [--lang es|en]
-//! server quality rules test    FILE... --data DATASET=PARQUET... --cut DATE [--lang es|en]
 //! server quality rules tidy    FILE... [--check] [--lang es|en]
 //! ```
 //!
@@ -20,7 +20,7 @@
 use quality::mapping::{Mapping, MappingError};
 use quality_rules::lint::{lint, tidy, Finding, Report, Severity};
 use quality_rules::{explain, model::RulesFile};
-use quality_rules_duckdb::{Counts, Runner};
+use quality_rules_duckdb::Runner;
 use texts::{text_in, Language};
 
 type Failure = Box<dyn std::error::Error>;
@@ -164,7 +164,7 @@ pub(crate) fn mapping_error(language: Language, path: &str, e: &MappingError) ->
     }
 }
 
-/// One rules file: lint always, then explain or test. True if it has errors.
+/// One rules file: lint always, then explain. True if it has errors.
 fn one_file(o: &Options, runner: &Runner, path: &str, yaml: &str) -> Result<bool, Failure> {
     let file: Option<RulesFile> = quality_rules::parse(yaml).ok();
     let dataset = file
@@ -190,26 +190,15 @@ fn one_file(o: &Options, runner: &Runner, path: &str, yaml: &str) -> Result<bool
     let Some(file) = file.filter(|_| !blocking) else {
         return Ok(blocking);
     };
-    match o.command.as_str() {
-        "explain" => {
-            let tables = runner.tables(&file);
-            for rule in &report.compiled {
-                println!(
-                    "{}\n{}\n",
-                    rule.id,
-                    explain::explain(rule, o.language, &tables).text(o.language)
-                );
-            }
+    if o.command == "explain" {
+        let tables = runner.tables(&file);
+        for rule in &report.compiled {
+            println!(
+                "{}\n{}\n",
+                rule.id,
+                explain::explain(rule, o.language, &tables).text(o.language)
+            );
         }
-        "test" => {
-            let cut = o
-                .cut
-                .as_deref()
-                .ok_or_else(|| text_in(o.language, "quality.cli.noCut", &[]))?;
-            let counts = runner.test(&dataset, &report.compiled, &runner.tables(&file), cut)?;
-            print_counts(o.language, &counts);
-        }
-        _ => {}
     }
     Ok(false)
 }
@@ -243,28 +232,6 @@ fn finding(language: Language, path: &str, f: &Finding) -> String {
     format!("{path}{place}: {} {severity}: {message}", f.code.id())
 }
 
-fn print_counts(language: Language, counts: &[Counts]) {
-    let h = |k: &str| text_in(language, &format!("quality.cli.column.{k}"), &[]);
-    println!(
-        "{:<24} {:>10} {:>10} {:>10} {:>10} {:>12}",
-        h("rule"),
-        h("applies"),
-        h("fails"),
-        h("passes"),
-        h("skipped"),
-        h("conformity")
-    );
-    for c in counts {
-        let conformity = c
-            .conformity()
-            .map_or("-".to_string(), |p| format!("{p:.2} %"));
-        println!(
-            "{:<24} {:>10} {:>10} {:>10} {:>10} {:>12}",
-            c.rule, c.applies, c.fails, c.passes, c.skipped, conformity
-        );
-    }
-}
-
 fn options(args: Vec<String>) -> Result<Options, Failure> {
     let usage = || -> Failure { text_in(Language::Es, "quality.cli.usage", &[]).into() };
     let mut it = args.into_iter();
@@ -273,7 +240,7 @@ fn options(args: Vec<String>) -> Result<Options, Failure> {
     }
     let command = it
         .next()
-        .filter(|c| ["lint", "explain", "test", "tidy"].contains(&c.as_str()))
+        .filter(|c| ["lint", "explain", "tidy"].contains(&c.as_str()))
         .ok_or_else(usage)?;
     let mut o = Options {
         command,

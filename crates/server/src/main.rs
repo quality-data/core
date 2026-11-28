@@ -36,6 +36,7 @@ mod config;
 mod database;
 mod drain_wiring;
 mod events_wiring;
+mod job_compiler;
 mod machine_gauge;
 mod machines_wiring;
 mod metrics_wiring;
@@ -48,6 +49,7 @@ mod serve_services;
 mod settings_wiring;
 mod startup;
 mod timezone;
+mod trino_tokens;
 mod updater_certificate;
 mod updates_wiring;
 
