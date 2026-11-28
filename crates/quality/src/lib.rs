@@ -4,6 +4,7 @@
 //! with M2, through `contracts`.
 
 pub mod bundle;
+pub mod bundle_api;
 pub mod catalog;
 pub mod chart_api;
 pub mod charts;
@@ -25,6 +26,7 @@ pub mod field_api;
 pub mod firing;
 pub mod job_grants;
 pub mod job_grants_api;
+pub mod job_inputs;
 mod job_lake;
 pub mod job_maintain;
 pub mod job_map;

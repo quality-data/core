@@ -6,6 +6,7 @@
 
 pub mod distribution;
 mod formats;
+mod shape;
 mod write;
 
 use std::collections::BTreeMap;
@@ -14,6 +15,7 @@ use quality_rules_compile::Compiled;
 use quality_rules_tree::Expr;
 
 pub use formats::regex as format_regex;
+pub use shape::ShapeKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Engine {

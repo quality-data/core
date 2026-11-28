@@ -1,8 +1,12 @@
 //! Writing gold (decision 0090, point 4): insert the run's rows, flip by
 //! one `run_summary` row with its `run_seq`, then delete the older runs'
 //! rows, each only after a count shows some (RustFS refuses an empty
-//! delete). No `MERGE`, no `UPDATE`: a row filter refuses them. Every retry
-//! is a new run: step 1 never runs twice with the same `run_id`.
+//! delete). No `MERGE`, no `UPDATE`: a row filter refuses them. A retry
+//! keeps the run's pinned bundle and its `run_id` (ruled by the user
+//! 2026-11-25), so every write is idempotent by `run_id`: before its
+//! inserts the job deletes what an earlier attempt of the run wrote, by the
+//! same count-then-delete, and a retry after a committed insert never
+//! doubles the run's rows.
 
 use quality_rules_sql::quote_text;
 
@@ -67,13 +71,35 @@ pub fn flip(run: &Run<'_>, body: &Statement) -> Result<Statement, Error> {
     })
 }
 
-fn older(table: &str, run: &Run<'_>) -> Result<String, Error> {
+fn rows_of(table: &str, run: &Run<'_>, op: &str) -> Result<String, Error> {
     Ok(format!(
-        "{GOLD}.\"{table}\" WHERE dataset = {} AND cut = DATE {} AND run_id <> {}",
+        "{GOLD}.\"{table}\" WHERE dataset = {} AND cut = DATE {} AND run_id {op} {}",
         quote_text(run.dataset)?,
         quote_text(run.cut)?,
         quote_text(run.run_id)?
     ))
+}
+
+fn older(table: &str, run: &Run<'_>) -> Result<String, Error> {
+    rows_of(table, run, "<>")
+}
+
+/// Step 0's count: what an earlier attempt of this run left in `table`
+/// (`run_summary` included, a flip that committed).
+pub fn run_rows(table: &str, run: &Run<'_>) -> Result<Statement, Error> {
+    Ok(Statement {
+        sql: format!("SELECT count(*) FROM {}", rows_of(table, run, "=")?),
+        cut_params: 0,
+    })
+}
+
+/// Step 0: an earlier attempt's rows of this run go, before step 1
+/// inserts them again. Issued only after [`run_rows`] counted some.
+pub fn delete_run(table: &str, run: &Run<'_>) -> Result<Statement, Error> {
+    Ok(Statement {
+        sql: format!("DELETE FROM {}", rows_of(table, run, "=")?),
+        cut_params: 0,
+    })
 }
 
 /// Step 3's count: the older runs' rows of `table`.
@@ -132,6 +158,16 @@ mod tests {
         assert_eq!(
             delete_older("findings", &RUN).unwrap().sql,
             format!("DELETE FROM {at}")
+        );
+        let this = "\"lake\".\"quality_gold\".\"findings\" WHERE dataset = 'loans' \
+                    AND cut = DATE '2026-10-31' AND run_id = 'r-2'";
+        assert_eq!(
+            run_rows("findings", &RUN).unwrap().sql,
+            format!("SELECT count(*) FROM {this}")
+        );
+        assert_eq!(
+            delete_run("findings", &RUN).unwrap().sql,
+            format!("DELETE FROM {this}")
         );
         for s in [i.sql, f.sql] {
             assert!(!s.contains("MERGE") && !s.contains("UPDATE"));
