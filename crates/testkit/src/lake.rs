@@ -164,6 +164,14 @@ impl Lake for InMemoryLake {
         state.objects.insert(at, body.to_vec());
         Ok(WriteOnce::Written)
     }
+
+    async fn read_object(&self, warehouse: &str, key: &str) -> Result<Option<Vec<u8>>, LakeError> {
+        let state = self.known(warehouse)?;
+        Ok(state
+            .objects
+            .get(&(warehouse.to_string(), key.to_string()))
+            .cloned())
+    }
 }
 
 #[async_trait]

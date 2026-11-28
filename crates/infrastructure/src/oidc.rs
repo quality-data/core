@@ -22,7 +22,7 @@ use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Row};
 
 use crate::admin_repo::{from_epoch, to_epoch};
-pub use crate::oidc_cli::{register_client, update_client};
+pub use crate::oidc_cli::{ensure_own_client, register_client, update_client};
 pub use crate::oidc_clients::PgOidcClients;
 use crate::oidc_es256::{es256_signer_from_env, key_from_env, split_keys};
 use crate::{OAuthSecrets, ResetTokenAdapter, SystemClock};
