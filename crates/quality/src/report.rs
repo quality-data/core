@@ -189,6 +189,9 @@ pub struct FieldQuality {
     pub pattern: Option<String>,
     /// The records with that shape.
     pub pattern_count: i64,
+    /// A floating-point number, which has no shape (decision 0090).
+    #[serde(default)]
+    pub floating: bool,
     /// Its mean ICD over the records where it has one (decision 0057).
     #[serde(default)]
     pub icd: Option<f64>,

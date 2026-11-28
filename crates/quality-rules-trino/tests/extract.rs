@@ -1,7 +1,8 @@
 //! Extraction through Trino (decision 0090, point 9, step 13).
 
 use quality_rules_trino::{
-    bronze_type, create_bronze, create_catalog, extract, split, Connector, Conversion, TablePath,
+    bronze_type, create_bronze, create_catalog, extract, split, Connector, Conversion, Cut,
+    TablePath,
 };
 
 fn t(catalog: &str, ns: &str, table: &str) -> TablePath {
@@ -65,11 +66,12 @@ fn a_load_is_one_insert_of_union_all_ranges() {
         ranges,
         [(1, Some(26)), (26, Some(51)), (51, Some(76)), (76, None)]
     );
+    let cut = Cut::parse("2026-10-31").unwrap();
     let s = extract(
         &bronze,
         &t("src_core1", "ops", "loans"),
         &cols,
-        ("2026-10-31", "job-1"),
+        (&cut, "job-1"),
         Some(("id", &ranges)),
     )
     .unwrap()
@@ -85,7 +87,7 @@ fn a_load_is_one_insert_of_union_all_ranges() {
         &bronze,
         &t("src_core1", "ops", "loans"),
         &cols,
-        ("2026-10-31", "job-1"),
+        (&cut, "job-1"),
         None,
     )
     .unwrap()
