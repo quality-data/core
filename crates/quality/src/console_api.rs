@@ -78,6 +78,19 @@ fn internal(e: sqlx::Error) -> Response {
     refuse(StatusCode::SERVICE_UNAVAILABLE, "unavailable")
 }
 
+/// The datasets with a cut whose results `caller` may view
+/// (`quality:ViewResults` on `pipeline/<dataset>`).
+async fn viewable(pool: &PgPool, caller: &Caller) -> Result<Vec<String>, sqlx::Error> {
+    let all: Vec<String> =
+        sqlx::query_scalar("SELECT DISTINCT dataset FROM quality.cuts ORDER BY dataset")
+            .fetch_all(pool)
+            .await?;
+    Ok(all
+        .into_iter()
+        .filter(|d| caller.can(crate::chart_api::VIEW, &format!("pipeline/{d}")))
+        .collect())
+}
+
 /// Queues a statement, audited as run.
 #[utoipa::path(post, path = "/quality/console", operation_id = "quality_run_statement",
     tag = "console", request_body = ConsoleAsk,
@@ -95,8 +108,14 @@ async fn ask(
     if wrapped(&ask.sql).is_err() {
         return refuse(StatusCode::UNPROCESSABLE_ENTITY, "statement");
     }
+    // Trino reads, for this statement, only the datasets whose results
+    // the asker may view (decision 0090, ruling 84).
+    let datasets = match viewable(&pool, &caller).await {
+        Ok(d) => d,
+        Err(e) => return internal(e),
+    };
     // Waited for: before the scheduled work, and run once.
-    let parameters = json!({ "sql": ask.sql, "by": caller.account });
+    let parameters = json!({ "sql": ask.sql, "by": caller.account, "datasets": datasets });
     let job: Result<Uuid, _> = sqlx::query_scalar(
         "INSERT INTO quality.jobs (kind, parameters, priority, max_attempts)
          VALUES ($1, $2, 10, 1) RETURNING id",
@@ -254,25 +273,32 @@ pub(crate) async fn report(
     if !result.is_valid() {
         return Err(StatusCode::UNPROCESSABLE_ENTITY);
     }
-    let value = serde_json::to_value(&result).map_err(|_| StatusCode::UNPROCESSABLE_ENTITY)?;
-    let stored = async {
-        sqlx::query(
-            "DELETE FROM quality.console_results WHERE created_at < now() - interval '1 hour'",
-        )
+    keep_result(pool, id, &result)
+        .await
+        .map(|()| StatusCode::NO_CONTENT)
+        .map_err(|e| {
+            tracing::error!("console report: {e}");
+            StatusCode::SERVICE_UNAVAILABLE
+        })
+}
+
+/// Keeps `result` as statement `id`'s for an hour; older ones are purged.
+pub(crate) async fn keep_result(
+    pool: &PgPool,
+    id: Uuid,
+    result: &ConsoleResult,
+) -> Result<(), sqlx::Error> {
+    let value = serde_json::to_value(result).map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
+    sqlx::query("DELETE FROM quality.console_results WHERE created_at < now() - interval '1 hour'")
         .execute(pool)
         .await?;
-        sqlx::query(
-            "INSERT INTO quality.console_results (job, result) VALUES ($1, $2)
-             ON CONFLICT (tenant_id, job) DO UPDATE SET result = EXCLUDED.result",
-        )
-        .bind(id)
-        .bind(value)
-        .execute(pool)
-        .await
-    }
-    .await;
-    stored.map(|_| StatusCode::NO_CONTENT).map_err(|e| {
-        tracing::error!("console report: {e}");
-        StatusCode::SERVICE_UNAVAILABLE
-    })
+    sqlx::query(
+        "INSERT INTO quality.console_results (job, result) VALUES ($1, $2)
+         ON CONFLICT (tenant_id, job) DO UPDATE SET result = EXCLUDED.result",
+    )
+    .bind(id)
+    .bind(value)
+    .execute(pool)
+    .await?;
+    Ok(())
 }

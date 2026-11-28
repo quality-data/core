@@ -12,7 +12,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::firing::{open_cut, CutRequest};
-use crate::proposal::{propose, Patterns, TableProfile};
+use crate::proposal::{propose, Alerts, Patterns, TableProfile};
 use crate::schedule::{self, Rerun, DEFAULT_TIMEZONE};
 use crate::worker_api::WorkerApi;
 
@@ -51,19 +51,35 @@ pub(crate) async fn report(
     {
         return Err(StatusCode::UNPROCESSABLE_ENTITY);
     }
-    let (Some(drafts), Some(alerts)) = (
-        api.services.drafts.as_deref(),
-        api.services.proposal_alerts.as_ref(),
-    ) else {
+    publish(
+        &api.pool,
+        (
+            api.services.drafts.as_deref(),
+            api.services.proposal_alerts.as_ref(),
+        ),
+        parameters,
+        dataset,
+        &report.profile,
+    )
+    .await
+}
+
+/// Turns `profile` into `dataset`'s proposal, publishes it on `main` and
+/// opens the dataset's first cut: a worker's report, or a Trino run's
+/// profile (decision 0090, ruling 79).
+pub(crate) async fn publish(
+    pool: &PgPool,
+    (drafts, alerts): (Option<&dyn Drafts>, Option<&Alerts>),
+    parameters: &serde_json::Value,
+    dataset: &str,
+    profile: &TableProfile,
+) -> Result<(), StatusCode> {
+    let asked = |key: &str| parameters.get(key).and_then(|v| v.as_str());
+    let (Some(drafts), Some(alerts)) = (drafts, alerts) else {
         return Err(StatusCode::SERVICE_UNAVAILABLE);
     };
     // The patterns the job profiled with: its proposal checks the same.
-    let proposal = propose(
-        dataset,
-        &report.profile,
-        &Patterns::of_job(parameters),
-        alerts,
-    );
+    let proposal = propose(dataset, profile, &Patterns::of_job(parameters), alerts);
     drafts
         .publish(dataset, &proposal.mapping, &proposal.rules)
         .await
@@ -71,7 +87,7 @@ pub(crate) async fn report(
             tracing::error!("map publish: {e}");
             StatusCode::SERVICE_UNAVAILABLE
         })?;
-    first_cut(&api.pool, dataset, asked("requested_by"))
+    first_cut(pool, dataset, asked("requested_by"))
         .await
         .map_err(|e| {
             tracing::error!("map cut: {e}");
