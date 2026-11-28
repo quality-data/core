@@ -21,12 +21,12 @@ pub use self::app::{
 };
 pub use self::app::{
     AuthorizationServer, AuthorizeOutcome, AuthorizeRequest, ClientChange, ModuleClients,
-    ModuleClientsError, ModuleClientsRequest, TokenError, TokenRequest, TokenResponse,
+    ModuleClientsError, ModuleClientsRequest, TokenError, TokenRequest, TokenResponse, CORE_CLIENT,
 };
 pub use self::domain::{
-    is_join_token, CertificateSigner, CertificateTerm, JoinTokenMint, Machine, MachineChange,
-    MachineId, MachineRegistry, MachineRole, MachineState, NewJoinToken, RedeemRefusal,
-    SignedCertificate, SigningRefusal, JOIN_TOKEN_LEN, JOIN_TOKEN_PREFIX,
+    is_join_token, CertificateSigner, CertificateTerm, JobSubject, JobUserKind, JoinTokenMint,
+    Machine, MachineChange, MachineId, MachineRegistry, MachineRole, MachineState, NewJoinToken,
+    RedeemRefusal, SignedCertificate, SigningRefusal, JOIN_TOKEN_LEN, JOIN_TOKEN_PREFIX,
 };
 pub use self::domain::{
     AccountPolicies, ActionHolder, AuthorizationCode, AuthorizationCodeStore, ClientAuth, ClientId,

@@ -33,7 +33,7 @@ mod module_clients;
 mod signers;
 mod userinfo;
 
-pub use machine::TRINO_AUDIENCE;
+pub use machine::{CORE_CLIENT, TRINO_AUDIENCE};
 pub use module_clients::{
     ClientChange, MachineClient, ModuleClients, ModuleClientsError, ModuleClientsRequest,
     PeopleClient, RoleClaimRequest, PREVIOUS_SECRET_TTL,

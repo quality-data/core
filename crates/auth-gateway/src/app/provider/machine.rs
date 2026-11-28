@@ -22,6 +22,10 @@ pub const TRINO_AUDIENCE: &str = "trino";
 
 const JOB_TOKEN_TTL: Duration = Duration::from_secs(15 * 60);
 
+/// The core's own internal client, whose token goes with its calls to
+/// modules (decision 0090, ruling 103).
+pub const CORE_CLIENT: &str = "qd-core";
+
 impl AuthorizationServer {
     pub(super) async fn client_credentials(
         &self,

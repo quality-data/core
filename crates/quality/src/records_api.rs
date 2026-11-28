@@ -296,25 +296,32 @@ pub(crate) async fn report(
     {
         return Err(StatusCode::UNPROCESSABLE_ENTITY);
     }
-    let value = serde_json::to_value(&page).map_err(|_| StatusCode::UNPROCESSABLE_ENTITY)?;
-    let stored = async {
-        sqlx::query(
-            "DELETE FROM quality.source_records WHERE created_at < now() - interval '1 hour'",
-        )
+    keep_page(pool, id, &page)
+        .await
+        .map(|()| StatusCode::NO_CONTENT)
+        .map_err(|e| {
+            tracing::error!("records report: {e}");
+            StatusCode::SERVICE_UNAVAILABLE
+        })
+}
+
+/// Keeps `page` as job `id`'s for an hour; older pages are purged.
+pub(crate) async fn keep_page(
+    pool: &PgPool,
+    id: Uuid,
+    page: &RecordsPage,
+) -> Result<(), sqlx::Error> {
+    let value = serde_json::to_value(page).map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
+    sqlx::query("DELETE FROM quality.source_records WHERE created_at < now() - interval '1 hour'")
         .execute(pool)
         .await?;
-        sqlx::query(
-            "INSERT INTO quality.source_records (job, page) VALUES ($1, $2)
-             ON CONFLICT (tenant_id, job) DO UPDATE SET page = EXCLUDED.page",
-        )
-        .bind(id)
-        .bind(value)
-        .execute(pool)
-        .await
-    }
-    .await;
-    stored.map(|_| StatusCode::NO_CONTENT).map_err(|e| {
-        tracing::error!("records report: {e}");
-        StatusCode::SERVICE_UNAVAILABLE
-    })
+    sqlx::query(
+        "INSERT INTO quality.source_records (job, page) VALUES ($1, $2)
+         ON CONFLICT (tenant_id, job) DO UPDATE SET page = EXCLUDED.page",
+    )
+    .bind(id)
+    .bind(value)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
