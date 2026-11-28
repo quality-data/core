@@ -38,7 +38,8 @@ pub const RUN_SUMMARY: GoldTable = GoldTable {
 };
 
 /// The detail tables, as the PostgreSQL index stores them (decision 0089,
-/// point 2.1), plus `findings` and `finding_groups` (decision 0059).
+/// point 2.1), plus `findings` and `finding_groups` (decision 0059) and
+/// `entity_icd`.
 pub const DETAILS: &[GoldTable] = &[
     GoldTable {
         name: "rule_results",
@@ -124,6 +125,13 @@ pub const DETAILS: &[GoldTable] = &[
     GoldTable {
         name: "finding_groups",
         columns: &[("record", TEXT), ("dimension", TEXT), ("grp", TEXT)],
+    },
+    // One row per entity (ruled by the user 2026-11-25, closing decision
+    // 0089's Open 2): its keyed hash, never its key, so the bands of two
+    // cuts can be matched (`band_transitions`).
+    GoldTable {
+        name: "entity_icd",
+        columns: &[("entity", TEXT), ("icd", DOUBLE), ("band", TEXT)],
     },
 ];
 
@@ -240,6 +248,10 @@ mod tests {
              (dataset VARCHAR, cut DATE, run_id VARCHAR, \"rule\" VARCHAR"
         ));
         assert!(rules.ends_with("ARRAY['dataset', 'cut', 'run_id'])"));
+        let entities = sql.iter().find(|s| s.contains("\"entity_icd\" (")).unwrap();
+        assert!(entities.contains("\"entity\" VARCHAR, \"icd\" DOUBLE, \"band\" VARCHAR"));
+        assert!(entities.ends_with("ARRAY['dataset', 'cut', 'run_id'])"));
+        assert!(sql.iter().any(|s| s.contains("v_entity_icd")));
         let views: Vec<&&str> = sql.iter().filter(|s| s.contains("VIEW")).collect();
         assert_eq!(views.len(), 2 + DETAILS.len());
         for v in views {
