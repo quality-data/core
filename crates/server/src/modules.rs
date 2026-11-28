@@ -354,8 +354,9 @@ fn run_token_services(p: AuthorizationServer, pool: PgPool) -> Option<RunTokenSe
     })
 }
 
-/// The module that provides orchestration, kept from the installed modules
-/// (decision 0090, ruling 104), read again every minute.
+/// The module that provides orchestration and the machine clients of those
+/// that require it, kept from the installed modules (decision 0090, rulings
+/// 104 and 109), read again every minute.
 fn orchestration(pool: &PgPool) -> quality::orchestrator_callers::Provider {
     static PROVIDER: std::sync::OnceLock<quality::orchestrator_callers::Provider> =
         std::sync::OnceLock::new();
@@ -363,22 +364,67 @@ fn orchestration(pool: &PgPool) -> quality::orchestrator_callers::Provider {
         .get_or_init(|| {
             let provider = quality::orchestrator_callers::Provider::default();
             let store = infrastructure::PgMaintenanceStore::new(pool.clone());
+            let clients = infrastructure::oidc::PgOidcClients::new(pool.clone());
             let kept = provider.clone();
             if let Ok(rt) = tokio::runtime::Handle::try_current() {
                 rt.spawn(async move {
                     loop {
-                        match store.modules().await {
-                            Ok(Some(modules)) => kept.update(&modules),
-                            Ok(None) => kept.update(&serde_json::Value::Null),
-                            Err(e) => tracing::warn!("reading the installed modules: {e}"),
+                        let modules = match store.modules().await {
+                            Ok(modules) => modules.unwrap_or(serde_json::Value::Null),
+                            Err(e) => {
+                                tracing::warn!("reading the installed modules: {e}");
+                                tokio::time::sleep(Duration::from_secs(60)).await;
+                                continue;
+                            }
+                        };
+                        kept.update(&modules);
+                        if let Some(found) = requirers(&clients, &modules).await {
+                            kept.update_requirers(found);
                         }
-                        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                        tokio::time::sleep(Duration::from_secs(60)).await;
                     }
                 });
             }
             provider
         })
         .clone()
+}
+
+/// The machine clients of the installed modules that require orchestration
+/// (ruling 109): ruling 47 grants the job runners' audience, `quality-jobs`,
+/// only to the client of a module that requires it. `None` when the clients
+/// cannot be read, so those known stay.
+async fn requirers(
+    clients: &dyn auth_gateway::OidcClientRegistry,
+    modules: &serde_json::Value,
+) -> Option<Vec<String>> {
+    let names = modules
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|m| m.get("name")?.as_str());
+    let mut found = Vec::new();
+    for name in names {
+        let registered = match clients.module_clients(name).await {
+            Ok(registered) => registered,
+            Err(e) => {
+                tracing::warn!("reading the clients of module {name}: {e}");
+                return None;
+            }
+        };
+        found.extend(
+            registered
+                .into_iter()
+                .filter(|c| {
+                    quality::orchestrator_callers::is_requirers_client(
+                        c.settings.client_credentials,
+                        &c.settings.audiences,
+                    )
+                })
+                .map(|c| c.id.as_str().to_owned()),
+        );
+    }
+    Some(found)
 }
 
 /// Machine tokens of the core's audience from the orchestration provider's
