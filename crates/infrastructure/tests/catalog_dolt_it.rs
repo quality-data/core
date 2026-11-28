@@ -83,6 +83,22 @@ async fn an_import_is_a_commit_read_back_as_of_it() {
         changed
     );
 
+    // A run's manifest's commit reads the files as they were then
+    // (decision 0090, step 22's backfill); a bad hash is refused.
+    let then = catalog
+        .files_at_commit("tenant_a", &first, "loans")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (then.commit.as_str(), then.rules),
+        (first.as_str(), first_rules.clone())
+    );
+    assert!(catalog
+        .files_at_commit("tenant_a", "x' OR '1", "loans")
+        .await
+        .is_err());
+
     // Another dataset's mapping comes with it, for the references.
     let none = Vec::new();
     let advisors = DatasetImport {
